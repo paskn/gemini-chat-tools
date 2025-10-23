@@ -85,6 +85,131 @@ class ChatAnalysis:
         return "\n".join(lines)
 
 
+def _detect_file_references(chunks: List[Dict[str, Any]]) -> List[FileReference]:
+    """
+    Detect file references in chat chunks.
+    
+    Args:
+        chunks: List of conversation chunks
+        
+    Returns:
+        List of FileReference objects
+    """
+    file_references = []
+    
+    # Patterns for detecting file references
+    attachment_patterns = [
+        r'attach(?:ed|ing|ment)?\s+(?:to\s+)?(?:this\s+)?(?:message\s+)?(?:is\s+)?(?:a\s+)?(?:the\s+)?(?:file|document|data|draft)',
+        r'(?:i|i\'ve|i\s+have)\s+attached',
+        r'see\s+(?:the\s+)?attached',
+        r'uploaded?\s+(?:the\s+)?(?:file|document)',
+        r'here\s+is\s+(?:the\s+)?(?:file|document|data)',
+    ]
+    
+    mention_patterns = [
+        r'in\s+(?:the\s+)?file\s+["\']?([^\s"\',.]+)',
+        r'(?:file|document)\s+(?:named|called)\s+["\']?([^\s"\',.]+)',
+        r'from\s+(?:the\s+)?file\s+["\']?([^\s"\',.]+)',
+    ]
+    
+    # File extension patterns
+    extension_patterns = [
+        r'\b([a-zA-Z0-9_\-]+\.(?:csv|xlsx?|json|txt|pdf|docx?|py|r|dta|sav|rds|parquet|feather|hdf5?))\b',
+    ]
+    
+    for i, chunk in enumerate(chunks):
+        text = chunk.get('text', '')
+        role = chunk.get('role', 'unknown')
+        
+        # Check for Google Drive documents first
+        if 'driveDocument' in chunk:
+            drive_doc = chunk.get('driveDocument', {})
+            drive_id = drive_doc.get('id', '')
+            token_count = chunk.get('tokenCount', 0)
+            
+            # Try to find a description in nearby chunks
+            context = f"Google Drive document (ID: {drive_id})"
+            if i + 1 < len(chunks) and chunks[i + 1].get('role') == 'user':
+                next_text = chunks[i + 1].get('text', '')
+                if next_text:
+                    context = next_text[:150]
+            
+            file_references.append(FileReference(
+                chunk_index=i,
+                role=role,
+                reference_type='drive_document',
+                context=context,
+                detected_filenames=[],
+                drive_id=drive_id,
+                token_count=token_count
+            ))
+            continue  # Skip other checks for this chunk
+        
+        # Check for attachment references
+        for pattern in attachment_patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                # Extract any filenames mentioned in the same context
+                filenames = []
+                for ext_pattern in extension_patterns:
+                    matches = re.findall(ext_pattern, text, re.IGNORECASE)
+                    filenames.extend(matches)
+                
+                # Get a reasonable context snippet
+                context = text[:200].strip()
+                
+                file_references.append(FileReference(
+                    chunk_index=i,
+                    role=role,
+                    reference_type='attached',
+                    context=context,
+                    detected_filenames=filenames
+                ))
+                break  # Only count each chunk once as an attachment
+        
+        # Check for file mentions with specific names
+        for pattern in mention_patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                filename = match.group(1) if match.groups() else ''
+                context = text[max(0, match.start() - 50):min(len(text), match.end() + 50)].strip()
+                
+                file_references.append(FileReference(
+                    chunk_index=i,
+                    role=role,
+                    reference_type='mentioned',
+                    context=context,
+                    detected_filenames=[filename] if filename else []
+                ))
+        
+        # Check for file extensions
+        for pattern in extension_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            if matches:
+                # Only add this reference if we haven't already added an attachment reference for this chunk
+                already_referenced = any(
+                    ref.chunk_index == i and ref.reference_type in ['attached', 'mentioned']
+                    for ref in file_references
+                )
+                
+                if not already_referenced:
+                    # Find context around first match
+                    first_match = re.search(pattern, text, re.IGNORECASE)
+                    if first_match:
+                        context = text[max(0, first_match.start() - 50):min(len(text), first_match.end() + 50)].strip()
+                    else:
+                        context = text[:200].strip()
+                    
+                    file_references.append(FileReference(
+                        chunk_index=i,
+                        role=role,
+                        reference_type='extension',
+                        context=context,
+                        detected_filenames=list(set(matches))  # Unique filenames
+                    ))
+    
+    return file_references
+
+
 def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
     """
     Analyze a Gemini chat export JSON file.
@@ -145,6 +270,9 @@ def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
             grounding_sources_count = len(grounding.get('groundingSources', []))
             break
     
+    # Detect file references
+    file_references = _detect_file_references(chunks)
+    
     structure_summary = {
         'has_run_settings': has_run_settings,
         'has_system_instruction': has_system_instruction,
@@ -161,6 +289,7 @@ def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
         has_grounding=has_grounding,
         web_searches=web_searches,
         grounding_sources_count=grounding_sources_count,
+        file_references=file_references,
         structure_summary=structure_summary,
     )
 
