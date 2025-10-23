@@ -1,10 +1,24 @@
 """Gemini Chat Tools - Utilities for analyzing Gemini chat exports."""
 
 import json
+import re
 from pathlib import Path
-from typing import Dict, Any, List
-from dataclasses import dataclass
+from typing import Dict, Any, List, Tuple
+from dataclasses import dataclass, field
 
+
+@dataclass
+class FileReference:
+    """A reference to a file mentioned in the chat."""
+    
+    chunk_index: int
+    role: str  # 'user' or 'model'
+    reference_type: str  # 'drive_document', 'attached', 'mentioned', 'extension'
+    context: str  # The text snippet mentioning the file
+    detected_filenames: List[str] = field(default_factory=list)
+    drive_id: str = ''  # Google Drive document ID if applicable
+    token_count: int = 0  # Token count for the file content
+    
 
 @dataclass
 class ChatAnalysis:
@@ -19,6 +33,7 @@ class ChatAnalysis:
     has_grounding: bool
     web_searches: List[str]
     grounding_sources_count: int
+    file_references: List[FileReference]
     structure_summary: Dict[str, Any]
     
     def __str__(self) -> str:
