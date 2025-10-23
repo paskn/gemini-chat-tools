@@ -149,3 +149,29 @@ def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
         structure_summary=structure_summary,
     )
 
+
+def main():
+    """CLI entry point."""
+    import sys
+    
+    if len(sys.argv) < 2:
+        print("Usage: gemini-chat-tools <path-to-chat-file>")
+        sys.exit(1)
+    
+    file_path = sys.argv[1]
+    
+    try:
+        analysis = analyze_gemini_chat(file_path)
+        print(analysis)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON file - {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+__all__ = ['analyze_gemini_chat', 'ChatAnalysis', 'main']
