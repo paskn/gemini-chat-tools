@@ -73,6 +73,63 @@ class ChatAnalysis:
                 if len(self.web_searches) > 5:
                     lines.append(f"    ... and {len(self.web_searches) - 5} more")
         
+        # File references section
+        lines.extend([
+            "",
+            "FILE REFERENCES:",
+            f"  Total file references found: {len(self.file_references)}",
+        ])
+        
+        if self.file_references:
+            # Count by type
+            drive_docs = sum(1 for ref in self.file_references if ref.reference_type == 'drive_document')
+            attached = sum(1 for ref in self.file_references if ref.reference_type == 'attached')
+            mentioned = sum(1 for ref in self.file_references if ref.reference_type == 'mentioned')
+            extension = sum(1 for ref in self.file_references if ref.reference_type == 'extension')
+            
+            lines.extend([
+                f"    Google Drive documents: {drive_docs}",
+                f"    Attached files: {attached}",
+                f"    Mentioned files: {mentioned}",
+                f"    File extensions referenced: {extension}",
+            ])
+            
+            # Show Drive document details
+            drive_refs = [ref for ref in self.file_references if ref.reference_type == 'drive_document']
+            if drive_refs:
+                total_drive_tokens = sum(ref.token_count for ref in drive_refs)
+                lines.append("")
+                lines.append(f"  Google Drive uploads ({len(drive_refs)} documents, {total_drive_tokens:,} tokens):")
+                for i, ref in enumerate(drive_refs[:10], 1):
+                    lines.append(f"    {i}. Chunk {ref.chunk_index}: {ref.token_count:,} tokens (ID: {ref.drive_id[:20]}...)")
+                if len(drive_refs) > 10:
+                    lines.append(f"    ... and {len(drive_refs) - 10} more")
+            
+            # Extract unique filenames
+            all_filenames = []
+            for ref in self.file_references:
+                all_filenames.extend(ref.detected_filenames)
+            unique_filenames = sorted(set(all_filenames))
+            
+            if unique_filenames:
+                lines.append("")
+                lines.append("  Detected filenames:")
+                for i, filename in enumerate(unique_filenames[:10], 1):
+                    lines.append(f"    {i}. {filename}")
+                if len(unique_filenames) > 10:
+                    lines.append(f"    ... and {len(unique_filenames) - 10} more")
+            
+            # Show attachment contexts
+            attachments = [ref for ref in self.file_references if ref.reference_type == 'attached']
+            if attachments:
+                lines.append("")
+                lines.append("  Attachment references:")
+                for i, ref in enumerate(attachments[:5], 1):
+                    context_preview = ref.context[:80] + "..." if len(ref.context) > 80 else ref.context
+                    lines.append(f"    {i}. Chunk {ref.chunk_index} ({ref.role}): {context_preview}")
+                if len(attachments) > 5:
+                    lines.append(f"    ... and {len(attachments) - 5} more")
+        
         lines.extend([
             "",
             "STRUCTURE DETAILS:",
@@ -318,4 +375,4 @@ def main():
         sys.exit(1)
 
 
-__all__ = ['analyze_gemini_chat', 'ChatAnalysis', 'main']
+__all__ = ['analyze_gemini_chat', 'ChatAnalysis', 'FileReference', 'main']
