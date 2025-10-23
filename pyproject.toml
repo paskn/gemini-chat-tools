@@ -1,0 +1,17 @@
+[project]
+name = "gemini-chat-tools"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "paskn", email = "pashakhin@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+gemini-chat-tools = "gemini_chat_tools:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
