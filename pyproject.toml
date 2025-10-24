@@ -7,7 +7,9 @@ authors = [
     { name = "paskn", email = "pashakhin@gmail.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "pandas>=2.0.0",
+]
 
 [project.scripts]
 gemini-chat-tools = "gemini_chat_tools:main"
