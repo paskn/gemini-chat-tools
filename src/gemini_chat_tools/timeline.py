@@ -11,7 +11,7 @@ Set include_thinking=True to include them if needed for specialized analysis.
 
 import pandas as pd
 from typing import List, Dict
-from gemini_chat_tools import ChatAnalysis
+from gemini_chat_tools import ChatAnalysis, _merge_file_upload_chunks
 
 
 def get_conversation_timeline(
@@ -178,99 +178,8 @@ def get_conversation_timeline_from_chunks(
             'cumulative_tokens', 'is_thinking', 'has_file_upload', 'file_upload_count'
         ])
     
-    # First pass: identify file upload sequences and merge them
-    merged_chunks = []
-    i = 0
-    
-    while i < len(chunks):
-        chunk = chunks[i]
-        is_thinking = chunk.get('isThought', False)
-        role = chunk.get('role', 'unknown')
-        
-        # Skip thinking chunks if not requested
-        if is_thinking and not include_thinking:
-            i += 1
-            continue
-        
-        # Skip error chunks (model errors like rate limits)
-        if 'errorMessage' in chunk:
-            i += 1
-            continue
-        
-        has_drive_doc = 'driveDocument' in chunk
-        has_drive_image = 'driveImage' in chunk
-        has_file_upload = has_drive_doc or has_drive_image
-        
-        # Check if this is a file upload chunk (user role, has drive upload, no text)
-        if role == 'user' and has_file_upload and not chunk.get('text', '').strip():
-            # Start accumulating file uploads
-            file_uploads = [chunk]
-            j = i + 1
-            
-            # Look ahead to collect consecutive file upload chunks
-            while j < len(chunks):
-                next_chunk = chunks[j]
-                next_is_thinking = next_chunk.get('isThought', False)
-                next_role = next_chunk.get('role', 'unknown')
-                
-                # Skip thinking chunks in the lookahead
-                if next_is_thinking and not include_thinking:
-                    j += 1
-                    continue
-                
-                # Skip error chunks in the lookahead
-                if 'errorMessage' in next_chunk:
-                    j += 1
-                    continue
-                
-                next_has_drive_doc = 'driveDocument' in next_chunk
-                next_has_drive_image = 'driveImage' in next_chunk
-                next_has_file = next_has_drive_doc or next_has_drive_image
-                next_text = next_chunk.get('text', '').strip()
-                
-                # If it's another file upload chunk, add it
-                if next_role == 'user' and next_has_file and not next_text:
-                    file_uploads.append(next_chunk)
-                    j += 1
-                # If it's a user message with text, merge it with the uploads
-                elif next_role == 'user' and next_text:
-                    file_uploads.append(next_chunk)
-                    j += 1
-                    break
-                # Otherwise, stop looking
-                else:
-                    break
-            
-            # Create merged chunk
-            # Count both driveDocument and driveImage uploads
-            upload_count = len([c for c in file_uploads 
-                               if 'driveDocument' in c or 'driveImage' in c])
-            
-            merged_chunk = {
-                'chunk_index': i,
-                'role': 'user',
-                'text': file_uploads[-1].get('text', '') if len(file_uploads) > 1 else '',
-                'tokens': sum(c.get('tokenCount', 0) for c in file_uploads),
-                'is_thinking': False,
-                'has_file_upload': True,
-                'file_upload_count': upload_count
-            }
-            merged_chunks.append(merged_chunk)
-            i = j
-        else:
-            # Regular chunk (not a file upload sequence)
-            has_upload = 'driveDocument' in chunk or 'driveImage' in chunk
-            merged_chunk = {
-                'chunk_index': i,
-                'role': role,
-                'text': chunk.get('text', ''),
-                'tokens': chunk.get('tokenCount', 0),
-                'is_thinking': is_thinking,
-                'has_file_upload': has_upload,
-                'file_upload_count': 1 if has_upload else 0
-            }
-            merged_chunks.append(merged_chunk)
-            i += 1
+    # Use shared merging logic from __init__.py
+    merged_chunks = _merge_file_upload_chunks(chunks, include_thinking=include_thinking)
     
     # Create DataFrame
     df = pd.DataFrame(merged_chunks)
