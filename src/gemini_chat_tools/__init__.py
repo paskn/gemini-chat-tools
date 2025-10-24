@@ -26,8 +26,8 @@ class ChatAnalysis:
     
     file_size_mb: float
     total_chunks: int
-    user_messages: int
-    model_messages: int
+    user_messages: int  # Raw chunk count (includes separate file upload chunks)
+    model_messages: int  # Raw chunk count (includes thinking chunks)
     thinking_chunks: int
     total_tokens: int
     has_grounding: bool
@@ -35,6 +35,8 @@ class ChatAnalysis:
     grounding_sources_count: int
     file_references: List[FileReference]
     structure_summary: Dict[str, Any]
+    user_turns: int = 0  # Conversational turns (file uploads merged with messages)
+    model_turns: int = 0  # Conversational turns (excluding thinking chunks)
     
     def __str__(self) -> str:
         """Return a formatted string representation of the analysis."""
@@ -48,14 +50,18 @@ class ChatAnalysis:
             f"  Total conversation chunks: {self.total_chunks}",
             "",
             "MESSAGE BREAKDOWN:",
-            f"  User messages: {self.user_messages}",
-            f"  Model chunks: {self.model_messages} total",
+            f"  User messages: {self.user_messages} chunks",
+            f"  Model messages: {self.model_messages} chunks",
             f"    - Thinking chunks: {self.thinking_chunks}",
             f"    - Response chunks: {self.model_messages - self.thinking_chunks}",
             "",
-            "  Note: User/model counts may not match 1:1 due to:",
-            "    - Empty user messages (file-only uploads)",
-            "    - Multiple model chunks per response (thinking + answer)",
+            "CONVERSATIONAL TURNS:",
+            f"  User turns: {self.user_turns}",
+            f"  Model turns: {self.model_turns}",
+            "",
+            "  Note: Turns differ from chunks because:",
+            "    - File uploads are merged with their accompanying messages",
+            "    - Thinking chunks are excluded from turn counts",
             "",
             "TOKEN USAGE:",
             f"  Total tokens counted: {self.total_tokens:,}",
@@ -395,6 +401,9 @@ def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
     model_messages = sum(1 for chunk in chunks if chunk.get('role') == 'model')
     thinking_chunks = sum(1 for chunk in chunks if chunk.get('isThought', False))
     
+    # Count conversational turns (with file upload merging)
+    user_turns, model_turns = _count_conversational_turns(chunks)
+    
     # Count tokens
     total_tokens = sum(chunk.get('tokenCount', 0) for chunk in chunks)
     
@@ -432,6 +441,8 @@ def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
         grounding_sources_count=grounding_sources_count,
         file_references=file_references,
         structure_summary=structure_summary,
+        user_turns=user_turns,
+        model_turns=model_turns,
     )
 
 
