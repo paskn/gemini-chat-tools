@@ -418,80 +418,12 @@ def _count_conversational_turns(chunks: List[Dict[str, Any]]) -> Tuple[int, int]
     Returns:
         Tuple of (user_turns, model_turns)
     """
-    user_turn_count = 0
-    model_turn_count = 0
-    i = 0
+    # Use shared merging logic
+    merged_chunks = _merge_file_upload_chunks(chunks, include_thinking=False)
     
-    while i < len(chunks):
-        chunk = chunks[i]
-        role = chunk.get('role', 'unknown')
-        is_thinking = chunk.get('isThought', False)
-        
-        # Skip thinking chunks
-        if is_thinking:
-            i += 1
-            continue
-        
-        # Skip error chunks
-        if 'errorMessage' in chunk:
-            i += 1
-            continue
-        
-        if role == 'user':
-            has_drive_doc = 'driveDocument' in chunk
-            has_drive_image = 'driveImage' in chunk
-            has_file_upload = has_drive_doc or has_drive_image
-            has_text = bool(chunk.get('text', '').strip())
-            
-            # Check if this is a file upload chunk (user role, has file upload, no text)
-            if has_file_upload and not has_text:
-                # Look ahead to collect consecutive file upload chunks
-                j = i + 1
-                while j < len(chunks):
-                    next_chunk = chunks[j]
-                    next_is_thinking = next_chunk.get('isThought', False)
-                    next_role = next_chunk.get('role', 'unknown')
-                    
-                    # Skip thinking chunks in lookahead
-                    if next_is_thinking:
-                        j += 1
-                        continue
-                    
-                    # Skip error chunks in lookahead
-                    if 'errorMessage' in next_chunk:
-                        j += 1
-                        continue
-                    
-                    next_has_drive_doc = 'driveDocument' in next_chunk
-                    next_has_drive_image = 'driveImage' in next_chunk
-                    next_has_file = next_has_drive_doc or next_has_drive_image
-                    next_text = next_chunk.get('text', '').strip()
-                    
-                    # If it's another file upload chunk, continue
-                    if next_role == 'user' and next_has_file and not next_text:
-                        j += 1
-                    # If it's a user message with text, this completes the turn
-                    elif next_role == 'user' and next_text:
-                        j += 1
-                        break
-                    # Otherwise, stop looking
-                    else:
-                        break
-                
-                # Count this as one user turn
-                user_turn_count += 1
-                i = j
-            else:
-                # Regular user message
-                user_turn_count += 1
-                i += 1
-        elif role == 'model':
-            # Model response (thinking already excluded)
-            model_turn_count += 1
-            i += 1
-        else:
-            # Unknown role, skip
-            i += 1
+    # Count turns by role
+    user_turn_count = sum(1 for chunk in merged_chunks if chunk['role'] == 'user')
+    model_turn_count = sum(1 for chunk in merged_chunks if chunk['role'] == 'model')
     
     return user_turn_count, model_turn_count
 
