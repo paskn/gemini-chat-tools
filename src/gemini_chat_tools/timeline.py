@@ -131,10 +131,13 @@ def get_conversation_timeline_from_chunks(
     of the user-facing conversation flow. For presentation purposes and
     conversation analysis, we focus on the interactive dialogue.
     
-    **File Upload Merging**: Google Drive file uploads appear as separate chunks
-    with driveDocument fields but no text. This function automatically merges
+    **File Upload Merging**: Google Drive uploads (driveDocument and driveImage)
+    appear as separate chunks with no text. This function automatically merges
     consecutive file upload chunks with the following user message chunk (if any)
     to represent them as a single conversational turn.
+    
+    **Error Chunks**: Model chunks with errorMessage fields (e.g., rate limit errors)
+    are excluded from the timeline as they don't represent actual conversational turns.
     
     **Note**: Gemini AI Studio chat exports do NOT include timestamps.
     This function uses chunk indices as a sequential ordering proxy.
@@ -182,17 +185,24 @@ def get_conversation_timeline_from_chunks(
     while i < len(chunks):
         chunk = chunks[i]
         is_thinking = chunk.get('isThought', False)
+        role = chunk.get('role', 'unknown')
         
         # Skip thinking chunks if not requested
         if is_thinking and not include_thinking:
             i += 1
             continue
         
-        role = chunk.get('role', 'unknown')
-        has_drive_doc = 'driveDocument' in chunk
+        # Skip error chunks (model errors like rate limits)
+        if 'errorMessage' in chunk:
+            i += 1
+            continue
         
-        # Check if this is a file upload chunk (user role, has driveDocument, no text)
-        if role == 'user' and has_drive_doc and not chunk.get('text', '').strip():
+        has_drive_doc = 'driveDocument' in chunk
+        has_drive_image = 'driveImage' in chunk
+        has_file_upload = has_drive_doc or has_drive_image
+        
+        # Check if this is a file upload chunk (user role, has drive upload, no text)
+        if role == 'user' and has_file_upload and not chunk.get('text', '').strip():
             # Start accumulating file uploads
             file_uploads = [chunk]
             j = i + 1
@@ -201,18 +211,25 @@ def get_conversation_timeline_from_chunks(
             while j < len(chunks):
                 next_chunk = chunks[j]
                 next_is_thinking = next_chunk.get('isThought', False)
+                next_role = next_chunk.get('role', 'unknown')
                 
                 # Skip thinking chunks in the lookahead
                 if next_is_thinking and not include_thinking:
                     j += 1
                     continue
                 
-                next_role = next_chunk.get('role', 'unknown')
-                next_has_drive = 'driveDocument' in next_chunk
+                # Skip error chunks in the lookahead
+                if 'errorMessage' in next_chunk:
+                    j += 1
+                    continue
+                
+                next_has_drive_doc = 'driveDocument' in next_chunk
+                next_has_drive_image = 'driveImage' in next_chunk
+                next_has_file = next_has_drive_doc or next_has_drive_image
                 next_text = next_chunk.get('text', '').strip()
                 
                 # If it's another file upload chunk, add it
-                if next_role == 'user' and next_has_drive and not next_text:
+                if next_role == 'user' and next_has_file and not next_text:
                     file_uploads.append(next_chunk)
                     j += 1
                 # If it's a user message with text, merge it with the uploads
@@ -225,6 +242,10 @@ def get_conversation_timeline_from_chunks(
                     break
             
             # Create merged chunk
+            # Count both driveDocument and driveImage uploads
+            upload_count = len([c for c in file_uploads 
+                               if 'driveDocument' in c or 'driveImage' in c])
+            
             merged_chunk = {
                 'chunk_index': i,
                 'role': 'user',
@@ -232,20 +253,21 @@ def get_conversation_timeline_from_chunks(
                 'tokens': sum(c.get('tokenCount', 0) for c in file_uploads),
                 'is_thinking': False,
                 'has_file_upload': True,
-                'file_upload_count': len([c for c in file_uploads if 'driveDocument' in c])
+                'file_upload_count': upload_count
             }
             merged_chunks.append(merged_chunk)
             i = j
         else:
             # Regular chunk (not a file upload sequence)
+            has_upload = 'driveDocument' in chunk or 'driveImage' in chunk
             merged_chunk = {
                 'chunk_index': i,
                 'role': role,
                 'text': chunk.get('text', ''),
                 'tokens': chunk.get('tokenCount', 0),
                 'is_thinking': is_thinking,
-                'has_file_upload': 'driveDocument' in chunk,
-                'file_upload_count': 1 if 'driveDocument' in chunk else 0
+                'has_file_upload': has_upload,
+                'file_upload_count': 1 if has_upload else 0
             }
             merged_chunks.append(merged_chunk)
             i += 1
