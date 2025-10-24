@@ -284,8 +284,9 @@ def _count_conversational_turns(chunks: List[Dict[str, Any]]) -> Tuple[int, int]
     
     This uses the same logic as the timeline module to provide semantically
     meaningful turn counts:
-    - File upload chunks are merged with their accompanying user messages
+    - File upload chunks (driveDocument and driveImage) are merged with their accompanying user messages
     - Thinking chunks are excluded from model turn counts
+    - Error chunks (with errorMessage) are excluded
     
     Args:
         chunks: List of chunk dictionaries from Gemini chat JSON
@@ -307,29 +308,43 @@ def _count_conversational_turns(chunks: List[Dict[str, Any]]) -> Tuple[int, int]
             i += 1
             continue
         
+        # Skip error chunks
+        if 'errorMessage' in chunk:
+            i += 1
+            continue
+        
         if role == 'user':
             has_drive_doc = 'driveDocument' in chunk
+            has_drive_image = 'driveImage' in chunk
+            has_file_upload = has_drive_doc or has_drive_image
             has_text = bool(chunk.get('text', '').strip())
             
-            # Check if this is a file upload chunk (user role, has driveDocument, no text)
-            if has_drive_doc and not has_text:
+            # Check if this is a file upload chunk (user role, has file upload, no text)
+            if has_file_upload and not has_text:
                 # Look ahead to collect consecutive file upload chunks
                 j = i + 1
                 while j < len(chunks):
                     next_chunk = chunks[j]
                     next_is_thinking = next_chunk.get('isThought', False)
+                    next_role = next_chunk.get('role', 'unknown')
                     
                     # Skip thinking chunks in lookahead
                     if next_is_thinking:
                         j += 1
                         continue
                     
-                    next_role = next_chunk.get('role', 'unknown')
-                    next_has_drive = 'driveDocument' in next_chunk
+                    # Skip error chunks in lookahead
+                    if 'errorMessage' in next_chunk:
+                        j += 1
+                        continue
+                    
+                    next_has_drive_doc = 'driveDocument' in next_chunk
+                    next_has_drive_image = 'driveImage' in next_chunk
+                    next_has_file = next_has_drive_doc or next_has_drive_image
                     next_text = next_chunk.get('text', '').strip()
                     
                     # If it's another file upload chunk, continue
-                    if next_role == 'user' and next_has_drive and not next_text:
+                    if next_role == 'user' and next_has_file and not next_text:
                         j += 1
                     # If it's a user message with text, this completes the turn
                     elif next_role == 'user' and next_text:
