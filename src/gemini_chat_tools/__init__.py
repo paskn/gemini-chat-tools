@@ -278,6 +278,130 @@ def _detect_file_references(chunks: List[Dict[str, Any]]) -> List[FileReference]
     return file_references
 
 
+def _merge_file_upload_chunks(
+    chunks: List[Dict[str, Any]], 
+    include_thinking: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Merge file upload chunks with their accompanying messages.
+    
+    This function encapsulates the core merging logic used by both the timeline
+    module and turn counting. It handles:
+    - File upload chunks (driveDocument and driveImage) merged with following messages
+    - Thinking chunks (excluded by default)
+    - Error chunks (always excluded)
+    
+    Args:
+        chunks: List of chunk dictionaries from Gemini chat JSON
+        include_thinking: If True, include thinking chunks (default: False)
+        
+    Returns:
+        List of merged chunk dictionaries, where each dict represents a 
+        conversational turn and contains:
+            - chunk_index: Original index of first chunk
+            - role: 'user' or 'model'
+            - text: Combined text content
+            - tokens: Sum of token counts
+            - is_thinking: Whether this is a thinking chunk
+            - has_file_upload: Whether this turn includes file uploads
+            - file_upload_count: Number of files uploaded
+    """
+    merged_chunks = []
+    i = 0
+    
+    while i < len(chunks):
+        chunk = chunks[i]
+        is_thinking = chunk.get('isThought', False)
+        role = chunk.get('role', 'unknown')
+        
+        # Skip thinking chunks if not requested
+        if is_thinking and not include_thinking:
+            i += 1
+            continue
+        
+        # Skip error chunks (model errors like rate limits)
+        if 'errorMessage' in chunk:
+            i += 1
+            continue
+        
+        has_drive_doc = 'driveDocument' in chunk
+        has_drive_image = 'driveImage' in chunk
+        has_file_upload = has_drive_doc or has_drive_image
+        
+        # Check if this is a file upload chunk (user role, has drive upload, no text)
+        if role == 'user' and has_file_upload and not chunk.get('text', '').strip():
+            # Start accumulating file uploads
+            file_uploads = [chunk]
+            j = i + 1
+            
+            # Look ahead to collect consecutive file upload chunks
+            while j < len(chunks):
+                next_chunk = chunks[j]
+                next_is_thinking = next_chunk.get('isThought', False)
+                next_role = next_chunk.get('role', 'unknown')
+                
+                # Skip thinking chunks in the lookahead
+                if next_is_thinking and not include_thinking:
+                    j += 1
+                    continue
+                
+                # Skip error chunks in the lookahead
+                if 'errorMessage' in next_chunk:
+                    j += 1
+                    continue
+                
+                next_has_drive_doc = 'driveDocument' in next_chunk
+                next_has_drive_image = 'driveImage' in next_chunk
+                next_has_file = next_has_drive_doc or next_has_drive_image
+                next_text = next_chunk.get('text', '').strip()
+                
+                # If it's another file upload chunk, add it
+                if next_role == 'user' and next_has_file and not next_text:
+                    file_uploads.append(next_chunk)
+                    j += 1
+                # If it's a user message with text, merge it with the uploads
+                elif next_role == 'user' and next_text:
+                    file_uploads.append(next_chunk)
+                    j += 1
+                    break
+                # Otherwise, stop looking
+                else:
+                    break
+            
+            # Create merged chunk
+            # Count both driveDocument and driveImage uploads
+            upload_count = len([c for c in file_uploads 
+                               if 'driveDocument' in c or 'driveImage' in c])
+            
+            merged_chunk = {
+                'chunk_index': i,
+                'role': 'user',
+                'text': file_uploads[-1].get('text', '') if len(file_uploads) > 1 else '',
+                'tokens': sum(c.get('tokenCount', 0) for c in file_uploads),
+                'is_thinking': False,
+                'has_file_upload': True,
+                'file_upload_count': upload_count
+            }
+            merged_chunks.append(merged_chunk)
+            i = j
+        else:
+            # Regular chunk (not a file upload sequence)
+            has_upload = 'driveDocument' in chunk or 'driveImage' in chunk
+            merged_chunk = {
+                'chunk_index': i,
+                'role': role,
+                'text': chunk.get('text', ''),
+                'tokens': chunk.get('tokenCount', 0),
+                'is_thinking': is_thinking,
+                'has_file_upload': has_upload,
+                'file_upload_count': 1 if has_upload else 0
+            }
+            merged_chunks.append(merged_chunk)
+            i += 1
+    
+    return merged_chunks
+
+
 def _count_conversational_turns(chunks: List[Dict[str, Any]]) -> Tuple[int, int]:
     """
     Count conversational turns (with file upload merging and thinking exclusion).
@@ -485,4 +609,4 @@ def main():
         sys.exit(1)
 
 
-__all__ = ['analyze_gemini_chat', 'ChatAnalysis', 'FileReference', 'main']
+__all__ = ['analyze_gemini_chat', 'ChatAnalysis', 'FileReference', 'main', '_merge_file_upload_chunks']
