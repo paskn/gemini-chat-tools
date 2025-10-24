@@ -272,6 +272,85 @@ def _detect_file_references(chunks: List[Dict[str, Any]]) -> List[FileReference]
     return file_references
 
 
+def _count_conversational_turns(chunks: List[Dict[str, Any]]) -> Tuple[int, int]:
+    """
+    Count conversational turns (with file upload merging and thinking exclusion).
+    
+    This uses the same logic as the timeline module to provide semantically
+    meaningful turn counts:
+    - File upload chunks are merged with their accompanying user messages
+    - Thinking chunks are excluded from model turn counts
+    
+    Args:
+        chunks: List of chunk dictionaries from Gemini chat JSON
+        
+    Returns:
+        Tuple of (user_turns, model_turns)
+    """
+    user_turn_count = 0
+    model_turn_count = 0
+    i = 0
+    
+    while i < len(chunks):
+        chunk = chunks[i]
+        role = chunk.get('role', 'unknown')
+        is_thinking = chunk.get('isThought', False)
+        
+        # Skip thinking chunks
+        if is_thinking:
+            i += 1
+            continue
+        
+        if role == 'user':
+            has_drive_doc = 'driveDocument' in chunk
+            has_text = bool(chunk.get('text', '').strip())
+            
+            # Check if this is a file upload chunk (user role, has driveDocument, no text)
+            if has_drive_doc and not has_text:
+                # Look ahead to collect consecutive file upload chunks
+                j = i + 1
+                while j < len(chunks):
+                    next_chunk = chunks[j]
+                    next_is_thinking = next_chunk.get('isThought', False)
+                    
+                    # Skip thinking chunks in lookahead
+                    if next_is_thinking:
+                        j += 1
+                        continue
+                    
+                    next_role = next_chunk.get('role', 'unknown')
+                    next_has_drive = 'driveDocument' in next_chunk
+                    next_text = next_chunk.get('text', '').strip()
+                    
+                    # If it's another file upload chunk, continue
+                    if next_role == 'user' and next_has_drive and not next_text:
+                        j += 1
+                    # If it's a user message with text, this completes the turn
+                    elif next_role == 'user' and next_text:
+                        j += 1
+                        break
+                    # Otherwise, stop looking
+                    else:
+                        break
+                
+                # Count this as one user turn
+                user_turn_count += 1
+                i = j
+            else:
+                # Regular user message
+                user_turn_count += 1
+                i += 1
+        elif role == 'model':
+            # Model response (thinking already excluded)
+            model_turn_count += 1
+            i += 1
+        else:
+            # Unknown role, skip
+            i += 1
+    
+    return user_turn_count, model_turn_count
+
+
 def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
     """
     Analyze a Gemini chat export JSON file.
