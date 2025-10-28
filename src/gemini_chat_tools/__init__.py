@@ -89,6 +89,110 @@ class ChatAnalysis:
         
         return self._timeline_cache
     
+    def _build_files_used_mapping(self) -> Dict[int, List[str]]:
+        """Build mapping from chunk_index (messageID) to Drive IDs.
+        
+        This method replicates the merge logic from _merge_file_upload_chunks
+        to correctly assign Drive IDs to the corresponding timeline messages.
+        
+        Returns:
+            Dict mapping chunk_index to list of Drive IDs (documents and images)
+        """
+        files_used = {}
+        chunks = self._chunks
+        i = 0
+        
+        while i < len(chunks):
+            chunk = chunks[i]
+            is_thinking = chunk.get('isThought', False)
+            role = chunk.get('role', 'unknown')
+            
+            # Skip thinking chunks (consistent with timeline)
+            if is_thinking:
+                i += 1
+                continue
+            
+            # Skip error chunks (consistent with timeline)
+            if 'errorMessage' in chunk:
+                i += 1
+                continue
+            
+            has_drive_doc = 'driveDocument' in chunk
+            has_drive_image = 'driveImage' in chunk
+            has_file_upload = has_drive_doc or has_drive_image
+            
+            # Check if this is a file upload chunk (user role, has drive upload, no text)
+            if role == 'user' and has_file_upload and not chunk.get('text', '').strip():
+                # Start accumulating file uploads
+                start_chunk_index = i  # This is the messageID
+                drive_ids = []
+                j = i
+                
+                # Collect Drive IDs from consecutive file upload chunks
+                while j < len(chunks):
+                    next_chunk = chunks[j]
+                    next_is_thinking = next_chunk.get('isThought', False)
+                    next_role = next_chunk.get('role', 'unknown')
+                    
+                    # Skip thinking chunks in lookahead
+                    if next_is_thinking:
+                        j += 1
+                        continue
+                    
+                    # Skip error chunks in lookahead
+                    if 'errorMessage' in next_chunk:
+                        j += 1
+                        continue
+                    
+                    next_has_drive_doc = 'driveDocument' in next_chunk
+                    next_has_drive_image = 'driveImage' in next_chunk
+                    next_has_file = next_has_drive_doc or next_has_drive_image
+                    next_text = next_chunk.get('text', '').strip()
+                    
+                    # If it's another file upload chunk, collect its Drive ID
+                    if next_role == 'user' and next_has_file and not next_text:
+                        if next_has_drive_doc:
+                            drive_id = next_chunk['driveDocument'].get('id', '')
+                            if drive_id:
+                                drive_ids.append(drive_id)
+                        if next_has_drive_image:
+                            drive_id = next_chunk['driveImage'].get('id', '')
+                            if drive_id:
+                                drive_ids.append(drive_id)
+                        j += 1
+                    # If it's a user message with text, stop (end of upload sequence)
+                    elif next_role == 'user' and next_text:
+                        j += 1
+                        break
+                    # Otherwise, stop looking
+                    else:
+                        break
+                
+                # Store the mapping
+                if drive_ids:
+                    files_used[start_chunk_index] = drive_ids
+                
+                i = j
+            else:
+                # Check if this single chunk has a file upload
+                if has_file_upload:
+                    drive_ids = []
+                    if has_drive_doc:
+                        drive_id = chunk['driveDocument'].get('id', '')
+                        if drive_id:
+                            drive_ids.append(drive_id)
+                    if has_drive_image:
+                        drive_id = chunk['driveImage'].get('id', '')
+                        if drive_id:
+                            drive_ids.append(drive_id)
+                    
+                    if drive_ids:
+                        files_used[i] = drive_ids
+                
+                i += 1
+        
+        return files_used
+    
     def __str__(self) -> str:
         """Return a formatted string representation of the analysis."""
         lines = [
