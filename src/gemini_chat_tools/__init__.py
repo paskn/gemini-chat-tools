@@ -37,6 +37,202 @@ class ChatAnalysis:
     structure_summary: Dict[str, Any]
     user_turns: int = 0  # Conversational turns (file uploads merged with messages)
     model_turns: int = 0  # Conversational turns (excluding thinking chunks)
+    _chunks: List[Dict[str, Any]] = field(default_factory=list, repr=False)  # Raw chunks for timeline generation
+    _timeline_cache: Any = field(default=None, repr=False)  # Cache for timeline DataFrame
+    _timeline_cache_params: bool = field(default=False, repr=False)  # Track include_thinking param
+    _files_used_cache: Dict[int, List[str]] = field(default=None, repr=False)  # Cache for files_used mapping
+    
+    def timeline(self, include_thinking: bool = False):
+        """Get conversation timeline as a pandas DataFrame.
+        
+        This method provides access to the sequential structure of the conversation,
+        with file uploads automatically merged with their accompanying messages.
+        
+        **IMPORTANT**: By default, thinking chunks are EXCLUDED from the timeline.
+        Set include_thinking=True to include them.
+        
+        Args:
+            include_thinking: If True, include thinking chunks (default: False)
+        
+        Returns:
+            pandas DataFrame with columns:
+                - chunk_index (int): Position of first chunk in conversation (0 to N)
+                - sequence_position (float): Normalized position (0.0 to 1.0)
+                - role (str): 'user' or 'model'
+                - text (str): Message text content
+                - tokens (int): Token count (sum of all merged chunks)
+                - cumulative_tokens (int): Running total of tokens
+                - is_thinking (bool): Whether this is a thinking chunk
+                - has_file_upload (bool): Whether this turn includes file uploads
+                - file_upload_count (int): Number of files uploaded in this turn
+        
+        Example:
+            >>> from gemini_chat_tools import analyze_gemini_chat
+            >>> 
+            >>> analysis = analyze_gemini_chat("my_chat.json")
+            >>> timeline = analysis.timeline()
+            >>> 
+            >>> # Analyze conversation structure
+            >>> print(f"Total turns: {len(timeline)}")
+            >>> print(f"User turns: {len(timeline[timeline['role'] == 'user'])}")
+            >>> print(f"Model turns: {len(timeline[timeline['role'] == 'model'])}")
+        """
+        # Import here to avoid circular dependency
+        from gemini_chat_tools.timeline import get_conversation_timeline_from_chunks
+        
+        # Check if we need to regenerate cache
+        if self._timeline_cache is None or self._timeline_cache_params != include_thinking:
+            self._timeline_cache = get_conversation_timeline_from_chunks(
+                self._chunks,
+                include_thinking=include_thinking
+            )
+            self._timeline_cache_params = include_thinking
+        
+        return self._timeline_cache
+    
+    def _build_files_used_mapping(self) -> Dict[int, List[str]]:
+        """Build mapping from chunk_index (messageID) to Drive IDs.
+        
+        This method replicates the merge logic from _merge_file_upload_chunks
+        to correctly assign Drive IDs to the corresponding timeline messages.
+        
+        Returns:
+            Dict mapping chunk_index to list of Drive IDs (documents and images)
+        """
+        files_used = {}
+        chunks = self._chunks
+        i = 0
+        
+        while i < len(chunks):
+            chunk = chunks[i]
+            is_thinking = chunk.get('isThought', False)
+            role = chunk.get('role', 'unknown')
+            
+            # Skip thinking chunks (consistent with timeline)
+            if is_thinking:
+                i += 1
+                continue
+            
+            # Skip error chunks (consistent with timeline)
+            if 'errorMessage' in chunk:
+                i += 1
+                continue
+            
+            has_drive_doc = 'driveDocument' in chunk
+            has_drive_image = 'driveImage' in chunk
+            has_file_upload = has_drive_doc or has_drive_image
+            
+            # Check if this is a file upload chunk (user role, has drive upload, no text)
+            if role == 'user' and has_file_upload and not chunk.get('text', '').strip():
+                # Start accumulating file uploads
+                start_chunk_index = i  # This is the messageID
+                drive_ids = []
+                j = i
+                
+                # Collect Drive IDs from consecutive file upload chunks
+                while j < len(chunks):
+                    next_chunk = chunks[j]
+                    next_is_thinking = next_chunk.get('isThought', False)
+                    next_role = next_chunk.get('role', 'unknown')
+                    
+                    # Skip thinking chunks in lookahead
+                    if next_is_thinking:
+                        j += 1
+                        continue
+                    
+                    # Skip error chunks in lookahead
+                    if 'errorMessage' in next_chunk:
+                        j += 1
+                        continue
+                    
+                    next_has_drive_doc = 'driveDocument' in next_chunk
+                    next_has_drive_image = 'driveImage' in next_chunk
+                    next_has_file = next_has_drive_doc or next_has_drive_image
+                    next_text = next_chunk.get('text', '').strip()
+                    
+                    # If it's another file upload chunk, collect its Drive ID
+                    if next_role == 'user' and next_has_file and not next_text:
+                        if next_has_drive_doc:
+                            drive_id = next_chunk['driveDocument'].get('id', '')
+                            if drive_id:
+                                drive_ids.append(drive_id)
+                        if next_has_drive_image:
+                            drive_id = next_chunk['driveImage'].get('id', '')
+                            if drive_id:
+                                drive_ids.append(drive_id)
+                        j += 1
+                    # If it's a user message with text, stop (end of upload sequence)
+                    elif next_role == 'user' and next_text:
+                        j += 1
+                        break
+                    # Otherwise, stop looking
+                    else:
+                        break
+                
+                # Store the mapping
+                if drive_ids:
+                    files_used[start_chunk_index] = drive_ids
+                
+                i = j
+            else:
+                # Check if this single chunk has a file upload
+                if has_file_upload:
+                    drive_ids = []
+                    if has_drive_doc:
+                        drive_id = chunk['driveDocument'].get('id', '')
+                        if drive_id:
+                            drive_ids.append(drive_id)
+                    if has_drive_image:
+                        drive_id = chunk['driveImage'].get('id', '')
+                        if drive_id:
+                            drive_ids.append(drive_id)
+                    
+                    if drive_ids:
+                        files_used[i] = drive_ids
+                
+                i += 1
+        
+        return files_used
+    
+    @property
+    def files_used(self) -> Dict[int, List[str]]:
+        """Get mapping from message chunk_index to Drive IDs.
+        
+        Returns a dictionary where:
+        - Keys are chunk_index values (matching timeline's chunk_index column)
+        - Values are lists of Google Drive IDs (documents and images)
+        
+        The keys correspond to messages in the timeline that have file uploads.
+        You can use this to look up which files were attached to a specific message:
+        
+            timeline_row = timeline[timeline['chunk_index'] == 21].iloc[0]
+            drive_ids = analysis.files_used[21]
+        
+        Returns:
+            Dict[int, List[str]]: Mapping from chunk_index to list of Drive IDs
+            
+        Example:
+            >>> from gemini_chat_tools import analyze_gemini_chat
+            >>> 
+            >>> analysis = analyze_gemini_chat("my_chat.json")
+            >>> timeline = analysis.timeline()
+            >>> 
+            >>> # Get all messages with file uploads
+            >>> file_messages = timeline[timeline['has_file_upload']]
+            >>> 
+            >>> # For each message, get the Drive IDs
+            >>> for idx, row in file_messages.iterrows():
+            >>>     chunk_idx = row['chunk_index']
+            >>>     drive_ids = analysis.files_used[chunk_idx]
+            >>>     print(f"Message {chunk_idx}: {len(drive_ids)} files")
+            >>> 
+            >>> # Look up specific message
+            >>> if 21 in analysis.files_used:
+            >>>     print(f"Chunk 21 files: {analysis.files_used[21]}")
+        """
+        if self._files_used_cache is None:
+            self._files_used_cache = self._build_files_used_mapping()
+        return self._files_used_cache
     
     def __str__(self) -> str:
         """Return a formatted string representation of the analysis."""
@@ -514,6 +710,7 @@ def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
         structure_summary=structure_summary,
         user_turns=user_turns,
         model_turns=model_turns,
+        _chunks=chunks,  # Store chunks for timeline generation
     )
 
 
