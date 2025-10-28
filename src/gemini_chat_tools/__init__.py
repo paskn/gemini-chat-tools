@@ -40,6 +40,7 @@ class ChatAnalysis:
     _chunks: List[Dict[str, Any]] = field(default_factory=list, repr=False)  # Raw chunks for timeline generation
     _timeline_cache: Any = field(default=None, repr=False)  # Cache for timeline DataFrame
     _timeline_cache_params: bool = field(default=False, repr=False)  # Track include_thinking param
+    _files_used_cache: Dict[int, List[str]] = field(default=None, repr=False)  # Cache for files_used mapping
     
     def timeline(self, include_thinking: bool = False):
         """Get conversation timeline as a pandas DataFrame.
@@ -192,6 +193,46 @@ class ChatAnalysis:
                 i += 1
         
         return files_used
+    
+    @property
+    def files_used(self) -> Dict[int, List[str]]:
+        """Get mapping from message chunk_index to Drive IDs.
+        
+        Returns a dictionary where:
+        - Keys are chunk_index values (matching timeline's chunk_index column)
+        - Values are lists of Google Drive IDs (documents and images)
+        
+        The keys correspond to messages in the timeline that have file uploads.
+        You can use this to look up which files were attached to a specific message:
+        
+            timeline_row = timeline[timeline['chunk_index'] == 21].iloc[0]
+            drive_ids = analysis.files_used[21]
+        
+        Returns:
+            Dict[int, List[str]]: Mapping from chunk_index to list of Drive IDs
+            
+        Example:
+            >>> from gemini_chat_tools import analyze_gemini_chat
+            >>> 
+            >>> analysis = analyze_gemini_chat("my_chat.json")
+            >>> timeline = analysis.timeline()
+            >>> 
+            >>> # Get all messages with file uploads
+            >>> file_messages = timeline[timeline['has_file_upload']]
+            >>> 
+            >>> # For each message, get the Drive IDs
+            >>> for idx, row in file_messages.iterrows():
+            >>>     chunk_idx = row['chunk_index']
+            >>>     drive_ids = analysis.files_used[chunk_idx]
+            >>>     print(f"Message {chunk_idx}: {len(drive_ids)} files")
+            >>> 
+            >>> # Look up specific message
+            >>> if 21 in analysis.files_used:
+            >>>     print(f"Chunk 21 files: {analysis.files_used[21]}")
+        """
+        if self._files_used_cache is None:
+            self._files_used_cache = self._build_files_used_mapping()
+        return self._files_used_cache
     
     def __str__(self) -> str:
         """Return a formatted string representation of the analysis."""
