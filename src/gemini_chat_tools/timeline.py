@@ -30,6 +30,12 @@ def get_conversation_timeline(
     **Note**: Gemini AI Studio chat exports do NOT include timestamps.
     This function uses chunk indices as a sequential ordering proxy.
     
+    **Note**: This function is now deprecated in favor of analysis.timeline().
+    Use the timeline() method on ChatAnalysis objects instead:
+    
+        analysis = analyze_gemini_chat("file.json")
+        timeline = analysis.timeline()
+    
     Args:
         analysis: ChatAnalysis object from analyze_gemini_chat()
         include_thinking: If True, include thinking chunks (default: False)
@@ -58,22 +64,8 @@ def get_conversation_timeline(
         >>> print(f"Model responses: {len(timeline[timeline['role'] == 'model'])}")
         >>> print(f"Total tokens: {timeline['cumulative_tokens'].iloc[-1]:,}")
     """
-    # Load the raw JSON data to access chunks
-    # We need to re-parse since ChatAnalysis doesn't expose raw chunks
-    import json
-    from pathlib import Path
-    
-    # Note: This is a limitation - we don't have direct access to the file path
-    # For now, we'll need to work with what we have in the analysis object
-    # TODO: Consider refactoring ChatAnalysis to include chunks or file_path
-    
-    # Since we can't access the original file from ChatAnalysis alone,
-    # we need to accept chunks directly or modify the approach
-    raise NotImplementedError(
-        "get_conversation_timeline() requires access to raw chunks. "
-        "Please use get_conversation_timeline_from_file() instead, "
-        "or pass chunks directly to get_conversation_timeline_from_chunks()."
-    )
+    # Delegate to the ChatAnalysis.timeline() method
+    return analysis.timeline(include_thinking=include_thinking)
 
 
 def get_conversation_timeline_from_file(
