@@ -37,6 +37,57 @@ class ChatAnalysis:
     structure_summary: Dict[str, Any]
     user_turns: int = 0  # Conversational turns (file uploads merged with messages)
     model_turns: int = 0  # Conversational turns (excluding thinking chunks)
+    _chunks: List[Dict[str, Any]] = field(default_factory=list, repr=False)  # Raw chunks for timeline generation
+    _timeline_cache: Any = field(default=None, repr=False)  # Cache for timeline DataFrame
+    _timeline_cache_params: bool = field(default=False, repr=False)  # Track include_thinking param
+    
+    def timeline(self, include_thinking: bool = False):
+        """Get conversation timeline as a pandas DataFrame.
+        
+        This method provides access to the sequential structure of the conversation,
+        with file uploads automatically merged with their accompanying messages.
+        
+        **IMPORTANT**: By default, thinking chunks are EXCLUDED from the timeline.
+        Set include_thinking=True to include them.
+        
+        Args:
+            include_thinking: If True, include thinking chunks (default: False)
+        
+        Returns:
+            pandas DataFrame with columns:
+                - chunk_index (int): Position of first chunk in conversation (0 to N)
+                - sequence_position (float): Normalized position (0.0 to 1.0)
+                - role (str): 'user' or 'model'
+                - text (str): Message text content
+                - tokens (int): Token count (sum of all merged chunks)
+                - cumulative_tokens (int): Running total of tokens
+                - is_thinking (bool): Whether this is a thinking chunk
+                - has_file_upload (bool): Whether this turn includes file uploads
+                - file_upload_count (int): Number of files uploaded in this turn
+        
+        Example:
+            >>> from gemini_chat_tools import analyze_gemini_chat
+            >>> 
+            >>> analysis = analyze_gemini_chat("my_chat.json")
+            >>> timeline = analysis.timeline()
+            >>> 
+            >>> # Analyze conversation structure
+            >>> print(f"Total turns: {len(timeline)}")
+            >>> print(f"User turns: {len(timeline[timeline['role'] == 'user'])}")
+            >>> print(f"Model turns: {len(timeline[timeline['role'] == 'model'])}")
+        """
+        # Import here to avoid circular dependency
+        from gemini_chat_tools.timeline import get_conversation_timeline_from_chunks
+        
+        # Check if we need to regenerate cache
+        if self._timeline_cache is None or self._timeline_cache_params != include_thinking:
+            self._timeline_cache = get_conversation_timeline_from_chunks(
+                self._chunks,
+                include_thinking=include_thinking
+            )
+            self._timeline_cache_params = include_thinking
+        
+        return self._timeline_cache
     
     def __str__(self) -> str:
         """Return a formatted string representation of the analysis."""
@@ -514,6 +565,7 @@ def analyze_gemini_chat(file_path: str | Path) -> ChatAnalysis:
         structure_summary=structure_summary,
         user_turns=user_turns,
         model_turns=model_turns,
+        _chunks=chunks,  # Store chunks for timeline generation
     )
 
 
