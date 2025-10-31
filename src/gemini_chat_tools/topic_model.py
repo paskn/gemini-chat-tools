@@ -385,3 +385,27 @@ class TopicModelAnalysis:
         """
         return self.model.visualize_topics(**kwargs)
     
+    def visualize_topics_per_class(self, classes: Optional[List[str]] = None, **kwargs):
+        """Visualize topic distribution across classes (e.g., user vs model).
+        
+        Args:
+            classes: List of class labels for each document. If None, uses 'role' from timeline.
+            **kwargs: Additional arguments passed to BERTopic.visualize_topics_per_class()
+            
+        Returns:
+            Plotly Figure object
+            
+        Example:
+            >>> # Compare user vs model topics
+            >>> fig = topic_analysis.visualize_topics_per_class()
+            >>> fig.write_html("topics_per_role.html")
+        """
+        messages = self.timeline['text'].tolist()
+        
+        if classes is None:
+            # Use role from timeline by default
+            classes = self.timeline['role'].tolist()
+        
+        topics_per_class = self.model.topics_per_class(messages, classes)
+        return self.model.visualize_topics_per_class(topics_per_class, **kwargs)
+    
