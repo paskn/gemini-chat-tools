@@ -409,3 +409,100 @@ class TopicModelAnalysis:
         topics_per_class = self.model.topics_per_class(messages, classes)
         return self.model.visualize_topics_per_class(topics_per_class, **kwargs)
     
+    def save_all_visualizations(
+        self,
+        output_dir: str = "topic_visualizations",
+        formats: Dict[str, str] = None,
+        n_words: int = 9
+    ) -> Dict[str, Path]:
+        """Generate and save all visualizations to a directory.
+        
+        Args:
+            output_dir: Directory to save visualizations (created if doesn't exist)
+            formats: Dict mapping visualization names to file extensions.
+                    Default: all HTML for interactive plots, SVG for datamap
+            n_words: Number of words for barchart visualization
+            
+        Returns:
+            Dict mapping visualization names to saved file paths
+            
+        Example:
+            >>> saved_files = topic_analysis.save_all_visualizations(
+            ...     output_dir="my_analysis",
+            ...     formats={'topics_over_time': 'html', 'document_datamap': 'svg'}
+            ... )
+            >>> print(f"Saved {len(saved_files)} visualizations")
+        """
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Default formats (interactive HTML, static SVG for datamap)
+        if formats is None:
+            formats = {
+                'topics_over_time': 'html',
+                'document_datamap': 'svg',
+                'barchart': 'html',
+                'documents': 'html',
+                'heatmap': 'html',
+                'topics': 'html',
+                'topics_per_class': 'html'
+            }
+        
+        saved_files = {}
+        
+        # Topics over time
+        if 'topics_over_time' in formats:
+            fig = self.visualize_topics_over_time()
+            file_path = output_path / f"topics_over_time.{formats['topics_over_time']}"
+            fig.write_html(str(file_path))
+            saved_files['topics_over_time'] = file_path
+        
+        # Document datamap
+        if 'document_datamap' in formats and self.reduced_embeddings is not None:
+            fig = self.visualize_document_datamap()
+            file_path = output_path / f"document_datamap.{formats['document_datamap']}"
+            if formats['document_datamap'] == 'svg':
+                fig.savefig(str(file_path), bbox_inches="tight")
+            else:
+                fig.write_html(str(file_path))
+            saved_files['document_datamap'] = file_path
+        
+        # Barchart
+        if 'barchart' in formats:
+            fig = self.visualize_barchart(n_words=n_words)
+            file_path = output_path / f"barchart.{formats['barchart']}"
+            fig.write_html(str(file_path))
+            saved_files['barchart'] = file_path
+        
+        # Documents (interactive)
+        if 'documents' in formats and self.reduced_embeddings is not None:
+            fig = self.visualize_documents()
+            file_path = output_path / f"documents.{formats['documents']}"
+            fig.write_html(str(file_path))
+            saved_files['documents'] = file_path
+        
+        # Heatmap
+        if 'heatmap' in formats:
+            fig = self.visualize_heatmap()
+            file_path = output_path / f"heatmap.{formats['heatmap']}"
+            fig.write_html(str(file_path))
+            saved_files['heatmap'] = file_path
+        
+        # Topics (intertopic distance)
+        if 'topics' in formats:
+            fig = self.visualize_topics()
+            file_path = output_path / f"intertopic_distance.{formats['topics']}"
+            fig.write_html(str(file_path))
+            saved_files['topics'] = file_path
+        
+        # Topics per class
+        if 'topics_per_class' in formats:
+            fig = self.visualize_topics_per_class()
+            file_path = output_path / f"topics_per_class.{formats['topics_per_class']}"
+            fig.write_html(str(file_path))
+            saved_files['topics_per_class'] = file_path
+        
+        return saved_files
+
+
+__all__ = ['TopicModelAnalysis', 'preprocess_timeline']
