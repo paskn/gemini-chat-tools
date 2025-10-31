@@ -789,4 +789,21 @@ def main():
         sys.exit(1)
 
 
-__all__ = ['analyze_gemini_chat', 'ChatAnalysis', 'FileReference', 'main', '_merge_file_upload_chunks']
+__all__ = [
+    'analyze_gemini_chat',
+    'ChatAnalysis',
+    'FileReference',
+    'main',
+    '_merge_file_upload_chunks'
+]
+
+# Topic modeling utilities (lazy import)
+def __getattr__(name):
+    """Lazy import for topic modeling to avoid heavy dependencies at import time."""
+    if name == 'TopicModelAnalysis':
+        from gemini_chat_tools.topic_model import TopicModelAnalysis
+        return TopicModelAnalysis
+    elif name == 'preprocess_timeline':
+        from gemini_chat_tools.topic_model import preprocess_timeline
+        return preprocess_timeline
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
