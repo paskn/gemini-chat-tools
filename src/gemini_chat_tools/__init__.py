@@ -3,7 +3,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 from dataclasses import dataclass, field
 
 
@@ -193,6 +193,57 @@ class ChatAnalysis:
                 i += 1
         
         return files_used
+    
+    def preprocess_for_topics(
+        self,
+        remove_urls: bool = True,
+        remove_stopwords: bool = True,
+        lemmatize: bool = True,
+        keep_only_alpha: bool = True,
+        custom_stopwords: Optional[List[str]] = None,
+        spacy_model: str = "en_core_web_sm"
+    ) -> Any:
+        """Preprocess conversation timeline for topic modeling.
+        
+        This is a convenience method that applies standard NLP preprocessing
+        to prepare the conversation for topic modeling with BERTopic.
+        
+        Args:
+            remove_urls: Remove HTTP/HTTPS URLs from text
+            remove_stopwords: Remove common English stop words
+            lemmatize: Apply lemmatization using spaCy
+            keep_only_alpha: Keep only alphabetic characters (removes punctuation, numbers)
+            custom_stopwords: Additional stop words to remove (e.g., ['gemini', 'ai'])
+            spacy_model: spaCy model to use for lemmatization
+            
+        Returns:
+            pandas DataFrame with preprocessed 'text' column
+            
+        Example:
+            >>> from gemini_chat_tools import analyze_gemini_chat
+            >>> 
+            >>> analysis = analyze_gemini_chat("chat.json")
+            >>> preprocessed_timeline = analysis.preprocess_for_topics()
+            >>> 
+            >>> # Use with topic modeling
+            >>> from gemini_chat_tools.topic_model import TopicModelAnalysis
+            >>> topic_analysis = TopicModelAnalysis.from_timeline(
+            ...     preprocessed_timeline,
+            ...     preprocess=False  # Already preprocessed
+            ... )
+        """
+        from gemini_chat_tools.topic_model import preprocess_timeline
+        
+        timeline = self.timeline()
+        return preprocess_timeline(
+            timeline,
+            remove_urls=remove_urls,
+            remove_stopwords=remove_stopwords,
+            lemmatize=lemmatize,
+            keep_only_alpha=keep_only_alpha,
+            custom_stopwords=custom_stopwords,
+            spacy_model=spacy_model
+        )
     
     @property
     def files_used(self) -> Dict[int, List[str]]:
