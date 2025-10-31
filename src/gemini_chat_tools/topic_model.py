@@ -328,3 +328,30 @@ class TopicModelAnalysis:
         """
         return self.model.visualize_barchart(n_words=n_words, **kwargs)
     
+    def visualize_documents(self, **kwargs):
+        """Create interactive 3D visualization of documents.
+        
+        Requires WebGL to display properly in browser.
+        
+        Args:
+            **kwargs: Additional arguments passed to BERTopic.visualize_documents()
+            
+        Returns:
+            Plotly Figure object
+            
+        Example:
+            >>> fig = topic_analysis.visualize_documents()
+            >>> fig.write_html("document_visualization.html")
+        """
+        if self.reduced_embeddings is None:
+            raise ValueError(
+                "Embeddings not computed. Set compute_embeddings=True when creating TopicModelAnalysis."
+            )
+        
+        messages = self.timeline['text'].tolist()
+        return self.model.visualize_documents(
+            messages,
+            reduced_embeddings=self.reduced_embeddings,
+            **kwargs
+        )
+    
