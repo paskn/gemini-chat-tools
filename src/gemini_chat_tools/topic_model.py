@@ -370,3 +370,18 @@ class TopicModelAnalysis:
         """
         return self.model.visualize_heatmap(**kwargs)
     
+    def visualize_topics(self, **kwargs):
+        """Visualize intertopic distance map.
+        
+        Args:
+            **kwargs: Additional arguments passed to BERTopic.visualize_topics()
+            
+        Returns:
+            Plotly Figure object
+            
+        Example:
+            >>> fig = topic_analysis.visualize_topics()
+            >>> fig.write_html("intertopic_distance.html")
+        """
+        return self.model.visualize_topics(**kwargs)
+    
