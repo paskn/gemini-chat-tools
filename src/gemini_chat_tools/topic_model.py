@@ -312,3 +312,19 @@ class TopicModelAnalysis:
             **kwargs
         )
     
+    def visualize_barchart(self, n_words: int = 9, **kwargs):
+        """Visualize top words per topic as bar charts.
+        
+        Args:
+            n_words: Number of words to show per topic (max 9 recommended)
+            **kwargs: Additional arguments passed to BERTopic.visualize_barchart()
+            
+        Returns:
+            Plotly Figure object
+            
+        Example:
+            >>> fig = topic_analysis.visualize_barchart(n_words=7)
+            >>> fig.write_html("topic_barchart.html")
+        """
+        return self.model.visualize_barchart(n_words=n_words, **kwargs)
+    
