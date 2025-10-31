@@ -355,3 +355,18 @@ class TopicModelAnalysis:
             **kwargs
         )
     
+    def visualize_heatmap(self, **kwargs):
+        """Visualize topic similarity as a heatmap.
+        
+        Args:
+            **kwargs: Additional arguments passed to BERTopic.visualize_heatmap()
+            
+        Returns:
+            Plotly Figure object
+            
+        Example:
+            >>> fig = topic_analysis.visualize_heatmap()
+            >>> fig.write_html("topic_heatmap.html")
+        """
+        return self.model.visualize_heatmap(**kwargs)
+    
