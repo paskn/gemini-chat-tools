@@ -264,3 +264,23 @@ class TopicModelAnalysis:
         """
         return self.model.get_topic_freq(topic_id)
     
+    def visualize_topics_over_time(self, **kwargs):
+        """Visualize how topics evolve over the conversation.
+        
+        Args:
+            **kwargs: Additional arguments passed to BERTopic.visualize_topics_over_time()
+            
+        Returns:
+            Plotly Figure object (can be displayed or saved with .write_html())
+            
+        Example:
+            >>> fig = topic_analysis.visualize_topics_over_time()
+            >>> fig.write_html("topics_over_time.html")
+        """
+        if self.topics_over_time is None:
+            messages = self.timeline['text'].tolist()
+            timestamps = self.timeline.index.tolist()
+            self.topics_over_time = self.model.topics_over_time(messages, timestamps)
+        
+        return self.model.visualize_topics_over_time(self.topics_over_time, **kwargs)
+    
