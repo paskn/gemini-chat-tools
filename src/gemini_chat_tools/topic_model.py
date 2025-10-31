@@ -284,3 +284,31 @@ class TopicModelAnalysis:
         
         return self.model.visualize_topics_over_time(self.topics_over_time, **kwargs)
     
+    def visualize_document_datamap(self, format: str = 'interactive', **kwargs):
+        """Visualize documents in 2D embedding space.
+        
+        Creates a 2D scatter plot of documents colored by topic using datamapplot.
+        
+        Args:
+            format: 'interactive' (default) or 'static'
+            **kwargs: Additional arguments passed to BERTopic.visualize_document_datamap()
+            
+        Returns:
+            Matplotlib Figure (static) or Plotly Figure (interactive)
+            
+        Example:
+            >>> fig = topic_analysis.visualize_document_datamap()
+            >>> fig.savefig("document_map.svg", bbox_inches="tight")
+        """
+        if self.reduced_embeddings is None:
+            raise ValueError(
+                "Embeddings not computed. Set compute_embeddings=True when creating TopicModelAnalysis."
+            )
+        
+        messages = self.timeline['text'].tolist()
+        return self.model.visualize_document_datamap(
+            messages,
+            reduced_embeddings=self.reduced_embeddings,
+            **kwargs
+        )
+    
