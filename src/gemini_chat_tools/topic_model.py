@@ -233,3 +233,34 @@ class TopicModelAnalysis:
         instance.topics_over_time = model.topics_over_time(messages, timestamps)
         
         return instance
+    
+    def get_topic_info(self) -> pd.DataFrame:
+        """Get information about all topics.
+        
+        Returns:
+            DataFrame with topic information (topic ID, count, words)
+        """
+        return self.model.get_topic_info()
+    
+    def get_topic(self, topic_id: int) -> List[Tuple[str, float]]:
+        """Get words and weights for a specific topic.
+        
+        Args:
+            topic_id: Topic ID to query
+            
+        Returns:
+            List of (word, weight) tuples
+        """
+        return self.model.get_topic(topic_id)
+    
+    def get_topic_freq(self, topic_id: int) -> int:
+        """Get frequency (document count) for a specific topic.
+        
+        Args:
+            topic_id: Topic ID to query
+            
+        Returns:
+            Number of documents assigned to this topic
+        """
+        return self.model.get_topic_freq(topic_id)
+    
