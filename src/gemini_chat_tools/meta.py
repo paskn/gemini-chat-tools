@@ -388,6 +388,224 @@ def _categorize_prompt_type(
         return 'general'
 
 
+def detect_prompt_fatigue(prompt_df: pd.DataFrame, window_size: int = 3) -> Dict[str, Any]:
+    """Detect signs of declining prompt quality over time (prompt fatigue).
+    
+    This function analyzes how prompt quality changed from the beginning to the
+    end of the conversation, identifying patterns like:
+    - Declining length (shorter prompts)
+    - Declining specificity (vaguer prompts)
+    - Increase in "lazy prompts" (minimal effort)
+    
+    Args:
+        prompt_df: DataFrame from analyze_prompt_patterns()
+        window_size: Number of segments to divide conversation into (default: 3 for thirds)
+        
+    Returns:
+        Dictionary with:
+            - avg_length_first_segment (float): Average word count in first segment
+            - avg_length_last_segment (float): Average word count in last segment
+            - length_decline_percentage (float): Percentage change (negative = decline)
+            - avg_specificity_first_segment (float): Average specificity in first segment
+            - avg_specificity_last_segment (float): Average specificity in last segment
+            - specificity_decline_percentage (float): Percentage change
+            - lazy_prompts (List[int]): Chunk indices of lazy prompts
+            - lazy_prompt_count (int): Total number of lazy prompts
+            - lazy_prompts_first_segment (int): Count in first segment
+            - lazy_prompts_last_segment (int): Count in last segment
+            - examples (List[Dict]): Examples of lazy prompts with context
+            - has_fatigue (bool): Whether significant fatigue detected
+            - segment_stats (List[Dict]): Detailed stats for each segment
+            
+    Example:
+        >>> from gemini_chat_tools import analyze_gemini_chat
+        >>> from gemini_chat_tools.meta import analyze_prompt_patterns, detect_prompt_fatigue
+        >>> 
+        >>> analysis = analyze_gemini_chat("chat.json")
+        >>> prompt_df = analyze_prompt_patterns(analysis._chunks)
+        >>> fatigue = detect_prompt_fatigue(prompt_df)
+        >>> 
+        >>> if fatigue['has_fatigue']:
+        >>>     print(f"Prompt quality declined {fatigue['length_decline_percentage']:.1f}%")
+        >>>     print(f"Found {fatigue['lazy_prompt_count']} lazy prompts")
+    """
+    
+    if len(prompt_df) == 0:
+        return {
+            'avg_length_first_segment': 0,
+            'avg_length_last_segment': 0,
+            'length_decline_percentage': 0,
+            'avg_specificity_first_segment': 0,
+            'avg_specificity_last_segment': 0,
+            'specificity_decline_percentage': 0,
+            'lazy_prompts': [],
+            'lazy_prompt_count': 0,
+            'lazy_prompts_first_segment': 0,
+            'lazy_prompts_last_segment': 0,
+            'examples': [],
+            'has_fatigue': False,
+            'segment_stats': []
+        }
+    
+    # Divide conversation into segments
+    n_prompts = len(prompt_df)
+    segment_size = n_prompts // window_size
+    
+    segment_stats = []
+    for i in range(window_size):
+        start_idx = i * segment_size
+        end_idx = (i + 1) * segment_size if i < window_size - 1 else n_prompts
+        segment = prompt_df.iloc[start_idx:end_idx]
+        
+        segment_stats.append({
+            'segment_number': i + 1,
+            'start_index': start_idx,
+            'end_index': end_idx,
+            'prompt_count': len(segment),
+            'avg_word_count': segment['word_count'].mean(),
+            'avg_specificity': segment['specificity_score'].mean(),
+            'median_word_count': segment['word_count'].median(),
+            'median_specificity': segment['specificity_score'].median(),
+        })
+    
+    # Get first and last segments
+    first_segment = prompt_df.iloc[:segment_size]
+    last_segment = prompt_df.iloc[-segment_size:]
+    
+    # Calculate averages
+    avg_length_first = first_segment['word_count'].mean()
+    avg_length_last = last_segment['word_count'].mean()
+    avg_spec_first = first_segment['specificity_score'].mean()
+    avg_spec_last = last_segment['specificity_score'].mean()
+    
+    # Calculate decline percentages
+    if avg_length_first > 0:
+        length_decline_pct = ((avg_length_last - avg_length_first) / avg_length_first) * 100
+    else:
+        length_decline_pct = 0
+    
+    if avg_spec_first > 0:
+        spec_decline_pct = ((avg_spec_last - avg_spec_first) / avg_spec_first) * 100
+    else:
+        spec_decline_pct = 0
+    
+    # Identify lazy prompts
+    lazy_prompts = _identify_lazy_prompts(prompt_df)
+    lazy_prompt_indices = lazy_prompts['chunk_index'].tolist()
+    
+    # Count lazy prompts in first vs last segment
+    first_segment_chunks = set(first_segment['chunk_index'])
+    last_segment_chunks = set(last_segment['chunk_index'])
+    
+    lazy_first = sum(1 for idx in lazy_prompt_indices if idx in first_segment_chunks)
+    lazy_last = sum(1 for idx in lazy_prompt_indices if idx in last_segment_chunks)
+    
+    # Get examples of lazy prompts
+    examples = []
+    for idx, row in lazy_prompts.head(10).iterrows():
+        examples.append({
+            'chunk': row['chunk_index'],
+            'text': row['user_text'],
+            'category': row['lazy_category'],
+            'word_count': row['word_count'],
+            'specificity': row['specificity_score']
+        })
+    
+    # Determine if significant fatigue detected
+    # Criteria: length decline > 20% OR specificity decline > 15% OR significant increase in lazy prompts
+    has_fatigue = (
+        length_decline_pct < -20 or 
+        spec_decline_pct < -15 or
+        (lazy_last > lazy_first * 2 and lazy_last > 3)  # Doubled lazy prompts and more than 3
+    )
+    
+    return {
+        'avg_length_first_segment': avg_length_first,
+        'avg_length_last_segment': avg_length_last,
+        'length_decline_percentage': length_decline_pct,
+        'avg_specificity_first_segment': avg_spec_first,
+        'avg_specificity_last_segment': avg_spec_last,
+        'specificity_decline_percentage': spec_decline_pct,
+        'lazy_prompts': lazy_prompt_indices,
+        'lazy_prompt_count': len(lazy_prompts),
+        'lazy_prompts_first_segment': lazy_first,
+        'lazy_prompts_last_segment': lazy_last,
+        'examples': examples,
+        'has_fatigue': has_fatigue,
+        'segment_stats': segment_stats
+    }
+
+
+def _identify_lazy_prompts(prompt_df: pd.DataFrame) -> pd.DataFrame:
+    """Identify prompts that show minimal effort (lazy prompts).
+    
+    Lazy prompts are characterized by:
+    - Very short length (< 20 characters or < 5 words)
+    - Low specificity score (< 0.15)
+    - Vague terms without context ("fix", "improve", "better")
+    - Acknowledgments without follow-up ("ok", "thanks", "yes")
+    
+    Args:
+        prompt_df: DataFrame from analyze_prompt_patterns()
+        
+    Returns:
+        DataFrame of lazy prompts with added 'lazy_category' column
+    """
+    
+    lazy_mask = pd.Series([False] * len(prompt_df), index=prompt_df.index)
+    categories = [''] * len(prompt_df)
+    
+    for idx, row in prompt_df.iterrows():
+        text = row['user_text']
+        text_lower = text.lower().strip()
+        word_count = row['word_count']
+        prompt_length = row['prompt_length']
+        specificity = row['specificity_score']
+        
+        # Category 1: Extremely short (< 20 chars or < 5 words)
+        # But exclude prompts with file context (they're actually specific)
+        if (prompt_length < 20 or word_count < 5) and not row['has_file_context']:
+            lazy_mask[idx] = True
+            categories[idx] = 'extremely_short'
+            continue
+        
+        # Category 2: Low specificity and short (< 10 words, specificity < 0.15)
+        # But exclude prompts with file context (they're actually specific)
+        if word_count < 10 and specificity < 0.15 and not row['has_file_context']:
+            lazy_mask[idx] = True
+            categories[idx] = 'short_and_vague'
+            continue
+        
+        # Category 3: Vague imperatives without context
+        vague_patterns = [
+            (r'^fix\s+(this|that|it)\.?$', 'vague_imperative'),
+            (r'^(improve|enhance|make\s+better)\s+(this|that|it)\.?$', 'vague_imperative'),
+            (r'^(change|update|modify)\s+(this|that|it)\.?$', 'vague_imperative'),
+        ]
+        
+        for pattern, category in vague_patterns:
+            if re.match(pattern, text_lower):
+                lazy_mask[idx] = True
+                categories[idx] = category
+                break
+        
+        # Category 4: Pure acknowledgments (but only if they're the full prompt)
+        ack_patterns = [r'^ok\.?$', r'^thanks?\.?$', r'^thank\s+you\.?$', 
+                       r'^yes\.?$', r'^no\.?$', r'^sure\.?$', r'^good\.?$', r'^great\.?$']
+        
+        for pattern in ack_patterns:
+            if re.match(pattern, text_lower):
+                lazy_mask[idx] = True
+                categories[idx] = 'acknowledgment_only'
+                break
+    
+    lazy_prompts = prompt_df[lazy_mask].copy()
+    lazy_prompts['lazy_category'] = [categories[idx] for idx in lazy_prompts.index]
+    
+    return lazy_prompts
+
+
 __all__ = [
     'analyze_prompt_patterns',
+    'detect_prompt_fatigue',
 ]
