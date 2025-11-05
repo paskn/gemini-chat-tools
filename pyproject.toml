@@ -26,4 +26,5 @@ dev = [
     "google-api-python-client>=2.185.0",
     "google-auth-oauthlib>=1.2.2",
     "jupyter>=1.1.1",
+    "pytest>=8.4.2",
 ]
