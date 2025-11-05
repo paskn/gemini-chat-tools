@@ -2,7 +2,12 @@
 
 import pytest
 import pandas as pd
-from gemini_chat_tools.meta import analyze_prompt_patterns, detect_prompt_fatigue
+from gemini_chat_tools.meta import (
+    analyze_prompt_patterns, 
+    detect_prompt_fatigue, 
+    categorize_prompt_types,
+    plot_prompt_quality_trend
+)
 
 
 def test_analyze_prompt_patterns_basic():
@@ -548,6 +553,209 @@ def test_detect_prompt_fatigue_file_context_exclusion():
     # Only the first "review this" should be lazy
     assert fatigue['lazy_prompt_count'] == 1
     assert fatigue['lazy_prompts'][0] == 0  # First chunk index
+
+
+def test_categorize_prompt_types_basic():
+    """Test basic prompt type categorization."""
+    data = []
+    
+    # Create prompts with known types
+    for i in range(10):
+        data.append({
+            'chunk_index': i,
+            'user_text': f'Question {i}?',
+            'prompt_length': 20,
+            'word_count': 10,
+            'has_question': True,
+            'is_command': False,
+            'is_followup': False,
+            'has_file_context': False,
+            'file_context_tokens': 0,
+            'specificity_score': 0.3,
+            'prompt_type': 'question'
+        })
+    
+    for i in range(10, 15):
+        data.append({
+            'chunk_index': i,
+            'user_text': f'Command {i}',
+            'prompt_length': 20,
+            'word_count': 10,
+            'has_question': False,
+            'is_command': True,
+            'is_followup': False,
+            'has_file_context': False,
+            'file_context_tokens': 0,
+            'specificity_score': 0.3,
+            'prompt_type': 'command'
+        })
+    
+    for i in range(15, 17):
+        data.append({
+            'chunk_index': i,
+            'user_text': f'Copyedit request {i}',
+            'prompt_length': 30,
+            'word_count': 15,
+            'has_question': False,
+            'is_command': True,
+            'is_followup': False,
+            'has_file_context': False,
+            'file_context_tokens': 0,
+            'specificity_score': 0.4,
+            'prompt_type': 'copyedit_request'
+        })
+    
+    prompt_df = pd.DataFrame(data)
+    categories = categorize_prompt_types(prompt_df, include_plot=False)
+    
+    # Check counts
+    assert categories['total'] == 17
+    assert categories['counts']['question'] == 10
+    assert categories['counts']['command'] == 5
+    assert categories['counts']['copyedit_request'] == 2
+    
+    # Check percentages
+    assert abs(categories['percentages']['question'] - 58.82) < 0.1  # 10/17
+    assert abs(categories['percentages']['command'] - 29.41) < 0.1  # 5/17
+    
+    # Check most/least common
+    assert categories['most_common'] == 'question'
+    assert categories['least_common'] == 'copyedit_request'
+    
+    # Check diversity score (should be moderate since we have 3 types)
+    assert 0 < categories['diversity_score'] < 1
+
+
+def test_categorize_prompt_types_single_type():
+    """Test categorization with only one prompt type."""
+    data = []
+    
+    for i in range(10):
+        data.append({
+            'chunk_index': i,
+            'user_text': f'Question {i}?',
+            'prompt_length': 20,
+            'word_count': 10,
+            'has_question': True,
+            'is_command': False,
+            'is_followup': False,
+            'has_file_context': False,
+            'file_context_tokens': 0,
+            'specificity_score': 0.3,
+            'prompt_type': 'question'
+        })
+    
+    prompt_df = pd.DataFrame(data)
+    categories = categorize_prompt_types(prompt_df)
+    
+    assert categories['total'] == 10
+    assert categories['counts']['question'] == 10
+    assert categories['most_common'] == 'question'
+    assert categories['least_common'] == 'question'
+    
+    # Diversity should be 0 (only one type)
+    assert categories['diversity_score'] == 0.0
+
+
+def test_categorize_prompt_types_even_distribution():
+    """Test categorization with evenly distributed types."""
+    data = []
+    types = ['question', 'command', 'general', 'iteration_feedback']
+    
+    for i, ptype in enumerate(types * 5):  # 5 of each type
+        data.append({
+            'chunk_index': i,
+            'user_text': f'Text {i}',
+            'prompt_length': 20,
+            'word_count': 10,
+            'has_question': False,
+            'is_command': False,
+            'is_followup': False,
+            'has_file_context': False,
+            'file_context_tokens': 0,
+            'specificity_score': 0.3,
+            'prompt_type': ptype
+        })
+    
+    prompt_df = pd.DataFrame(data)
+    categories = categorize_prompt_types(prompt_df)
+    
+    assert categories['total'] == 20
+    
+    # All should have equal count
+    for ptype in types:
+        assert categories['counts'][ptype] == 5
+        assert categories['percentages'][ptype] == 25.0
+    
+    # Diversity should be 1.0 (perfect distribution)
+    assert abs(categories['diversity_score'] - 1.0) < 0.01
+
+
+def test_categorize_prompt_types_empty_dataframe():
+    """Test categorization with empty DataFrame."""
+    empty_df = pd.DataFrame(columns=['chunk_index', 'user_text', 'prompt_type'])
+    
+    categories = categorize_prompt_types(empty_df)
+    
+    assert categories['total'] == 0
+    assert categories['counts'] == {}
+    assert categories['percentages'] == {}
+    assert categories['most_common'] is None
+    assert categories['least_common'] is None
+    assert categories['diversity_score'] == 0.0
+
+
+def test_categorize_prompt_types_with_real_data():
+    """Test categorization with realistic prompt data."""
+    chunks = [
+        {'role': 'user', 'text': 'Fix the grammar in this sentence.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'What does this mean?', 'tokenCount': 8},
+        {'role': 'user', 'text': 'Make this paragraph clearer.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'How should I address the reviewer critique?', 'tokenCount': 15},
+        {'role': 'user', 'text': 'Try again, that\'s too formal.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'What tense should I use here?', 'tokenCount': 10},
+        {'role': 'user', 'text': 'Give me 3 different versions.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'ok', 'tokenCount': 5},
+    ]
+    
+    prompt_df = analyze_prompt_patterns(chunks)
+    categories = categorize_prompt_types(prompt_df)
+    
+    # Should have multiple types
+    assert categories['total'] == 8
+    assert len(categories['counts']) >= 3  # At least 3 different types
+    
+    # Check that percentages add up to 100
+    assert abs(sum(categories['percentages'].values()) - 100.0) < 0.1
+    
+    # Diversity should be > 0
+    assert categories['diversity_score'] > 0
+
+
+def test_plot_prompt_quality_trend_basic(capsys):
+    """Test that plot function runs without errors on basic data."""
+    chunks = [
+        {'role': 'user', 'text': 'This is a detailed prompt with specific requirements.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'Another long prompt with context.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'Short.', 'tokenCount': 5},
+        {'role': 'user', 'text': 'ok', 'tokenCount': 5},
+    ]
+    
+    prompt_df = analyze_prompt_patterns(chunks)
+    
+    # Should run without errors (won't actually display in test)
+    # We're just checking it doesn't crash
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # Non-interactive backend for testing
+        plot_prompt_quality_trend(prompt_df)
+    except ImportError:
+        # If matplotlib not available, should print error
+        plot_prompt_quality_trend(prompt_df)
+        captured = capsys.readouterr()
+        assert "matplotlib required" in captured.out
+
+
 def test_plot_prompt_quality_trend_empty_dataframe(capsys):
     """Test plot function handles empty DataFrame gracefully."""
     empty_df = pd.DataFrame(columns=['chunk_index', 'user_text', 'word_count', 
