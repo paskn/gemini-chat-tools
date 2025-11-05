@@ -993,6 +993,114 @@ def identify_conversation_segments(
     
     else:
         raise ValueError(f"Unknown segmentation method: {method}")
+
+
+def _segment_equal_chunks(
+    timeline: pd.DataFrame,
+    prompt_df: pd.DataFrame,
+    n_segments: int
+) -> List[Dict[str, Any]]:
+    """Divide conversation into N equal-sized segments."""
+    
+    segments = []
+    total_prompts = len(prompt_df)
+    segment_size = total_prompts // n_segments
+    
+    for i in range(n_segments):
+        start_idx = i * segment_size
+        end_idx = (i + 1) * segment_size if i < n_segments - 1 else total_prompts
+        
+        segment_prompts = prompt_df.iloc[start_idx:end_idx]
+        chunk_indices = segment_prompts['chunk_index'].tolist()
+        segment_timeline = timeline[timeline['chunk_index'].isin(chunk_indices)]
+        
+        segments.append(_build_segment_dict(
+            segment_id=i + 1,
+            start_prompt=start_idx,
+            end_prompt=end_idx - 1,
+            segment_prompts=segment_prompts,
+            segment_timeline=segment_timeline,
+            total_prompts=total_prompts,
+            description=f"Segment {i+1} of {n_segments}"
+        ))
+    
+    return segments
+
+
+def _segment_token_burst(
+    timeline: pd.DataFrame,
+    prompt_df: pd.DataFrame,
+    n_segments: int = None
+) -> List[Dict[str, Any]]:
+    """Detect segments based on token usage bursts."""
+    
+    # Calculate rolling average of word count (proxy for activity level)
+    window_size = max(5, len(prompt_df) // 20)  # Adaptive window
+    rolling_avg = prompt_df['word_count'].rolling(window=window_size, center=True).mean()
+    
+    # Detect significant changes in word count (potential boundaries)
+    # Use gradient to find where activity level changes
+    import numpy as np
+    gradient = np.gradient(rolling_avg.fillna(method='bfill').fillna(method='ffill'))
+    
+    # Find local minima in gradient (transition points)
+    # These indicate where the conversation shifts from high to low activity or vice versa
+    threshold = np.std(gradient) * 0.5  # Sensitivity parameter
+    
+    boundaries = [0]  # Always start at 0
+    for i in range(window_size, len(gradient) - window_size):
+        # Look for significant drops or rises
+        if abs(gradient[i]) < threshold:
+            # This is a stable point - check if it's a local minimum
+            if gradient[i-1] < 0 and gradient[i+1] > 0:
+                boundaries.append(i)
+    boundaries.append(len(prompt_df))  # Always end at last prompt
+    
+    # If we have too many boundaries, keep only the most significant
+    if n_segments is not None and len(boundaries) - 1 > n_segments:
+        # Calculate significance of each boundary
+        significance = []
+        for i in range(1, len(boundaries) - 1):
+            before_avg = prompt_df.iloc[boundaries[i-1]:boundaries[i]]['word_count'].mean()
+            after_avg = prompt_df.iloc[boundaries[i]:boundaries[i+1]]['word_count'].mean()
+            significance.append((i, abs(after_avg - before_avg)))
+        
+        # Keep top N most significant boundaries
+        significance.sort(key=lambda x: x[1], reverse=True)
+        keep_indices = [0] + [sig[0] for sig in significance[:n_segments-1]] + [len(boundaries) - 1]
+        keep_indices.sort()
+        boundaries = [boundaries[i] for i in keep_indices]
+    
+    # Build segments
+    segments = []
+    for i in range(len(boundaries) - 1):
+        start_idx = boundaries[i]
+        end_idx = boundaries[i + 1]
+        
+        segment_prompts = prompt_df.iloc[start_idx:end_idx]
+        chunk_indices = segment_prompts['chunk_index'].tolist()
+        segment_timeline = timeline[timeline['chunk_index'].isin(chunk_indices)]
+        
+        # Characterize the segment
+        avg_word_count = segment_prompts['word_count'].mean()
+        characteristics = []
+        if avg_word_count < prompt_df['word_count'].mean() * 0.7:
+            characteristics.append('short_prompts')
+        elif avg_word_count > prompt_df['word_count'].mean() * 1.3:
+            characteristics.append('long_prompts')
+        
+        segments.append(_build_segment_dict(
+            segment_id=i + 1,
+            start_prompt=start_idx,
+            end_prompt=end_idx - 1,
+            segment_prompts=segment_prompts,
+            segment_timeline=segment_timeline,
+            total_prompts=len(prompt_df),
+            characteristics=characteristics,
+            description=_generate_segment_description(segment_prompts, characteristics)
+        ))
+    
+    return segments
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
