@@ -199,3 +199,109 @@ def test_analyze_prompt_patterns_reviewer_references():
     # Specificity should increase with more specific references
     assert df.iloc[0]['specificity_score'] < df.iloc[1]['specificity_score']
     assert df.iloc[1]['specificity_score'] <= df.iloc[2]['specificity_score']
+
+
+def test_analyze_prompt_patterns_file_upload_context():
+    """Test that file upload context is properly detected and affects specificity."""
+    chunks = [
+        # Case 1: Short prompt without file context
+        {'role': 'user', 'text': 'Please review this draft.', 'tokenCount': 10},
+        {'role': 'model', 'text': 'Sure, I can help...', 'tokenCount': 20},
+        
+        # Case 2: File upload followed by short prompt
+        {'role': 'user', 'driveDocument': {'id': 'abc123'}, 'text': '', 'tokenCount': 2500},
+        {'role': 'user', 'text': 'Please review this draft.', 'tokenCount': 10},
+        {'role': 'model', 'text': 'I\'ve reviewed your document...', 'tokenCount': 100},
+        
+        # Case 3: Multiple file uploads followed by prompt
+        {'role': 'user', 'driveDocument': {'id': 'def456'}, 'text': '', 'tokenCount': 3000},
+        {'role': 'user', 'driveImage': {'id': 'ghi789'}, 'text': '', 'tokenCount': 500},
+        {'role': 'user', 'text': 'Compare these two files.', 'tokenCount': 10},
+    ]
+    
+    df = analyze_prompt_patterns(chunks)
+    
+    # Should have 3 prompts (the ones with text)
+    assert len(df) == 3
+    
+    # First prompt: no file context
+    assert df.iloc[0]['has_file_context'] == False
+    assert df.iloc[0]['file_context_tokens'] == 0
+    baseline_specificity = df.iloc[0]['specificity_score']
+    
+    # Second prompt: has file context (2500 tokens)
+    assert df.iloc[1]['has_file_context'] == True
+    assert df.iloc[1]['file_context_tokens'] == 2500
+    assert df.iloc[1]['specificity_score'] > baseline_specificity  # Should be higher!
+    
+    # Third prompt: has file context from multiple files (3500 tokens total)
+    assert df.iloc[2]['has_file_context'] == True
+    assert df.iloc[2]['file_context_tokens'] == 3500
+    assert df.iloc[2]['specificity_score'] > baseline_specificity
+    # More file context should mean higher specificity
+    assert df.iloc[2]['specificity_score'] >= df.iloc[1]['specificity_score']
+
+
+def test_analyze_prompt_patterns_file_context_stops_at_model():
+    """Test that file context detection stops at model responses."""
+    chunks = [
+        # Old file upload from previous exchange
+        {'role': 'user', 'driveDocument': {'id': 'old123'}, 'text': '', 'tokenCount': 1000},
+        {'role': 'user', 'text': 'Here is an old file.', 'tokenCount': 10},
+        {'role': 'model', 'text': 'Thanks, I see it...', 'tokenCount': 50},
+        
+        # New prompt - should NOT pick up old file upload
+        {'role': 'user', 'text': 'Now do something else.', 'tokenCount': 10},
+    ]
+    
+    df = analyze_prompt_patterns(chunks)
+    
+    # Second prompt should NOT have file context (stopped by model response)
+    assert df.iloc[1]['has_file_context'] == False
+    assert df.iloc[1]['file_context_tokens'] == 0
+
+
+def test_analyze_prompt_patterns_file_context_lookback_limit():
+    """Test that file context has a lookback limit."""
+    chunks = [
+        # File upload far away (more than 5 chunks back)
+        {'role': 'user', 'driveDocument': {'id': 'far123'}, 'text': '', 'tokenCount': 1000},
+        {'role': 'user', 'text': 'chunk 1', 'tokenCount': 5},
+        {'role': 'user', 'text': 'chunk 2', 'tokenCount': 5},
+        {'role': 'user', 'text': 'chunk 3', 'tokenCount': 5},
+        {'role': 'user', 'text': 'chunk 4', 'tokenCount': 5},
+        {'role': 'user', 'text': 'chunk 5', 'tokenCount': 5},
+        # This prompt is 6 chunks away from the file upload
+        {'role': 'user', 'text': 'This is too far away.', 'tokenCount': 10},
+    ]
+    
+    df = analyze_prompt_patterns(chunks)
+    
+    # Last prompt should NOT have file context (too far away)
+    last_prompt = df.iloc[-1]
+    assert last_prompt['has_file_context'] == False
+    assert last_prompt['file_context_tokens'] == 0
+
+
+def test_analyze_prompt_patterns_file_context_with_inline_quotes():
+    """Test that prompts with inline quoted text have higher specificity."""
+    chunks = [
+        # Prompt without quotes
+        {'role': 'user', 'text': 'Please improve the clarity of the paragraph about autocratization.', 'tokenCount': 20},
+        
+        # Prompt with quoted text (inline context)
+        {'role': 'user', 'text': '''
+Please improve the clarity of this paragraph: "This is a paragraph about 
+autocratization that includes detailed argumentation and specific examples."
+The paragraph should be more accessible.
+        ''', 'tokenCount': 50},
+    ]
+    
+    df = analyze_prompt_patterns(chunks)
+    
+    # Neither has file context
+    assert df.iloc[0]['has_file_context'] == False
+    assert df.iloc[1]['has_file_context'] == False
+    
+    # But the second should have higher specificity due to quoted text
+    assert df.iloc[1]['specificity_score'] > df.iloc[0]['specificity_score']
