@@ -605,6 +605,88 @@ def _identify_lazy_prompts(prompt_df: pd.DataFrame) -> pd.DataFrame:
     return lazy_prompts
 
 
+def categorize_prompt_types(prompt_df: pd.DataFrame, include_plot: bool = False) -> Dict[str, Any]:
+    """Categorize prompts by intent and return distribution statistics.
+    
+    This function analyzes the prompt_type column from analyze_prompt_patterns()
+    and provides a breakdown of how prompts are distributed across different
+    categories of intent.
+    
+    Args:
+        prompt_df: DataFrame from analyze_prompt_patterns()
+        include_plot: If True, create and display a visualization
+        
+    Returns:
+        Dictionary with:
+            - counts (Dict[str, int]): Count of prompts per category
+            - percentages (Dict[str, float]): Percentage per category
+            - total (int): Total number of prompts
+            - most_common (str): Most frequently used prompt type
+            - least_common (str): Least frequently used prompt type (excluding zeros)
+            - diversity_score (float): 0-1, higher = more diverse prompt types
+            
+    Example:
+        >>> from gemini_chat_tools import analyze_gemini_chat
+        >>> from gemini_chat_tools.meta import analyze_prompt_patterns, categorize_prompt_types
+        >>> 
+        >>> analysis = analyze_gemini_chat("chat.json")
+        >>> prompt_df = analyze_prompt_patterns(analysis._chunks)
+        >>> categories = categorize_prompt_types(prompt_df, include_plot=True)
+        >>> 
+        >>> print(f"Most common: {categories['most_common']}")
+        >>> print(f"Distribution: {categories['percentages']}")
+    """
+    
+    if len(prompt_df) == 0:
+        return {
+            'counts': {},
+            'percentages': {},
+            'total': 0,
+            'most_common': None,
+            'least_common': None,
+            'diversity_score': 0.0
+        }
+    
+    # Count prompt types
+    type_counts = prompt_df['prompt_type'].value_counts().to_dict()
+    total = len(prompt_df)
+    
+    # Calculate percentages
+    percentages = {ptype: (count / total) * 100 for ptype, count in type_counts.items()}
+    
+    # Identify most and least common
+    most_common = max(type_counts.items(), key=lambda x: x[1])[0]
+    least_common = min(type_counts.items(), key=lambda x: x[1])[0]
+    
+    # Calculate diversity score (Shannon entropy normalized to 0-1)
+    # Higher score = more diverse usage of different prompt types
+    import math
+    entropy = 0.0
+    for count in type_counts.values():
+        if count > 0:
+            p = count / total
+            entropy -= p * math.log2(p)
+    
+    # Normalize by max possible entropy (log2 of number of categories)
+    max_entropy = math.log2(len(type_counts)) if len(type_counts) > 1 else 1.0
+    diversity_score = entropy / max_entropy if max_entropy > 0 else 0.0
+    
+    result = {
+        'counts': type_counts,
+        'percentages': percentages,
+        'total': total,
+        'most_common': most_common,
+        'least_common': least_common,
+        'diversity_score': diversity_score
+    }
+    
+    # Create visualization if requested
+    if include_plot:
+        _plot_prompt_type_distribution(type_counts, total)
+    
+    return result
+
+
 def _plot_prompt_type_distribution(type_counts: Dict[str, int], total: int):
     """Create visualization of prompt type distribution.
     
@@ -837,7 +919,11 @@ def plot_prompt_quality_trend(prompt_df: pd.DataFrame,
     
     plt.tight_layout()
     plt.show()
+
+
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
+    'categorize_prompt_types',
+    'plot_prompt_quality_trend',
 ]
