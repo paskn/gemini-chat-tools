@@ -1389,9 +1389,122 @@ def _build_segment_dict(
         'characteristics': characteristics,
         'description': description
     }
+
+
+def identify_turning_points(
+    timeline: pd.DataFrame,
+    prompt_df: pd.DataFrame,
+    segments: List[Dict[str, Any]] = None
+) -> List[Dict[str, Any]]:
+    """Identify key moments where conversation direction changed.
+    
+    This function detects turning points in the conversation such as:
+    - Topic shifts (prompt pattern changes)
+    - File upload boundaries (new context introduced)
+    - Segment transitions
+    - Significant changes in interaction style
+    
+    Args:
+        timeline: DataFrame from ChatAnalysis.timeline()
+        prompt_df: DataFrame from analyze_prompt_patterns()
+        segments: Optional pre-computed segments from identify_conversation_segments()
+        
+    Returns:
+        List of turning point dictionaries with:
+            - chunk_index (int): Where the turning point occurs
+            - prompt_number (int): Prompt number in sequence
+            - type (str): Type of turning point
+            - description (str): What changed
+            - characteristics (List[str]): Detected changes
+            - before_segment (int): Segment ID before (if applicable)
+            - after_segment (int): Segment ID after (if applicable)
+            
+    Example:
+        >>> from gemini_chat_tools import analyze_gemini_chat
+        >>> from gemini_chat_tools.meta import analyze_prompt_patterns, identify_turning_points
+        >>> 
+        >>> analysis = analyze_gemini_chat("chat.json")
+        >>> timeline = analysis.timeline()
+        >>> prompt_df = analyze_prompt_patterns(analysis._chunks)
+        >>> 
+        >>> turning_points = identify_turning_points(timeline, prompt_df)
+        >>> for tp in turning_points:
+        >>>     print(f"Prompt {tp['prompt_number']}: {tp['description']}")
+    """
+    
+    turning_points = []
+    
+    # If segments provided, segment boundaries are turning points
+    if segments:
+        for i, seg in enumerate(segments[1:], 1):  # Skip first segment
+            prev_seg = segments[i - 1]
+            
+            turning_points.append({
+                'chunk_index': prompt_df.iloc[seg['start_prompt']]['chunk_index'],
+                'prompt_number': seg['start_prompt'],
+                'type': 'segment_boundary',
+                'description': f"Transition: {prev_seg['description']} → {seg['description']}",
+                'characteristics': _compare_segments(prev_seg, seg),
+                'before_segment': prev_seg['segment_id'],
+                'after_segment': seg['segment_id']
+            })
+    
+    # File upload boundaries
+    file_uploads = prompt_df[prompt_df['has_file_context'] == True]
+    for idx, row in file_uploads.iterrows():
+        prompt_num = prompt_df.index.get_loc(idx)
+        
+        turning_points.append({
+            'chunk_index': row['chunk_index'],
+            'prompt_number': prompt_num,
+            'type': 'file_upload',
+            'description': f"New file(s) uploaded ({row['file_context_tokens']} tokens)",
+            'characteristics': ['file_upload', 'new_context'],
+            'before_segment': None,
+            'after_segment': None
+        })
+    
+    # Sort by prompt number
+    turning_points.sort(key=lambda x: x['prompt_number'])
+    
+    return turning_points
+
+
+def _compare_segments(seg1: Dict, seg2: Dict) -> List[str]:
+    """Compare two segments and identify key differences."""
+    
+    differences = []
+    
+    # Word count change
+    word_change = (seg2['avg_word_count'] - seg1['avg_word_count']) / seg1['avg_word_count']
+    if word_change < -0.3:
+        differences.append('shorter_prompts')
+    elif word_change > 0.3:
+        differences.append('longer_prompts')
+    
+    # Specificity change
+    spec_change = (seg2['avg_specificity'] - seg1['avg_specificity']) / seg1['avg_specificity']
+    if spec_change < -0.2:
+        differences.append('less_specific')
+    elif spec_change > 0.2:
+        differences.append('more_specific')
+    
+    # Prompt type change
+    if seg1['dominant_prompt_types'] != seg2['dominant_prompt_types']:
+        differences.append('prompt_type_shift')
+    
+    # File upload change
+    if seg2['has_file_uploads'] and not seg1['has_file_uploads']:
+        differences.append('file_upload_introduced')
+    
+    return differences
+
+
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
     'categorize_prompt_types',
     'plot_prompt_quality_trend',
+    'identify_conversation_segments',
+    'identify_turning_points',
 ]
