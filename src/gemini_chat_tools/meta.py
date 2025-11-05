@@ -1260,6 +1260,53 @@ def _segment_file_upload(
         ))
     
     return segments
+
+
+def _characterize_segment(
+    segment_prompts: pd.DataFrame,
+    all_prompts: pd.DataFrame
+) -> List[str]:
+    """Identify key characteristics of a segment."""
+    
+    characteristics = []
+    
+    # Word count
+    avg_word_count = segment_prompts['word_count'].mean()
+    overall_avg = all_prompts['word_count'].mean()
+    if avg_word_count < overall_avg * 0.7:
+        characteristics.append('short_prompts')
+    elif avg_word_count > overall_avg * 1.3:
+        characteristics.append('long_prompts')
+    
+    # Specificity
+    avg_spec = segment_prompts['specificity_score'].mean()
+    overall_spec = all_prompts['specificity_score'].mean()
+    if avg_spec > overall_spec * 1.2:
+        characteristics.append('high_specificity')
+    elif avg_spec < overall_spec * 0.8:
+        characteristics.append('low_specificity')
+    
+    # Question ratio
+    question_ratio = segment_prompts['has_question'].sum() / len(segment_prompts)
+    if question_ratio > 0.6:
+        characteristics.append('high_question_ratio')
+    
+    # Dominant prompt type
+    dominant_type = segment_prompts['prompt_type'].mode()
+    if len(dominant_type) > 0:
+        dominant = dominant_type.iloc[0]
+        if dominant == 'iteration_feedback':
+            characteristics.append('iterative')
+        elif dominant == 'explanation_request':
+            characteristics.append('exploratory')
+        elif dominant == 'command':
+            characteristics.append('directive')
+    
+    # File context
+    if segment_prompts['has_file_context'].any():
+        characteristics.append('file_focused')
+    
+    return characteristics
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
