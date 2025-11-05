@@ -1215,6 +1215,51 @@ def _segment_topic_shift(
         ))
     
     return segments
+
+
+def _segment_file_upload(
+    timeline: pd.DataFrame,
+    prompt_df: pd.DataFrame
+) -> List[Dict[str, Any]]:
+    """Split conversation at file upload boundaries."""
+    
+    # Find all prompts with file uploads
+    upload_prompts = prompt_df[prompt_df['has_file_context'] == True].index.tolist()
+    
+    if not upload_prompts:
+        # No file uploads, return single segment
+        return _segment_equal_chunks(timeline, prompt_df, 1)
+    
+    # Create boundaries at file uploads
+    boundaries = [0] + upload_prompts + [len(prompt_df)]
+    boundaries = sorted(set(boundaries))  # Remove duplicates and sort
+    
+    # Build segments
+    segments = []
+    for i in range(len(boundaries) - 1):
+        start_idx = boundaries[i]
+        end_idx = boundaries[i + 1]
+        
+        segment_prompts = prompt_df.iloc[start_idx:end_idx]
+        chunk_indices = segment_prompts['chunk_index'].tolist()
+        segment_timeline = timeline[timeline['chunk_index'].isin(chunk_indices)]
+        
+        # Check if this segment has file uploads
+        has_uploads = segment_prompts['has_file_context'].any()
+        characteristics = ['file_upload'] if has_uploads else []
+        
+        segments.append(_build_segment_dict(
+            segment_id=i + 1,
+            start_prompt=start_idx,
+            end_prompt=end_idx - 1,
+            segment_prompts=segment_prompts,
+            segment_timeline=segment_timeline,
+            total_prompts=len(prompt_df),
+            characteristics=characteristics,
+            description=_generate_segment_description(segment_prompts, characteristics)
+        ))
+    
+    return segments
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
