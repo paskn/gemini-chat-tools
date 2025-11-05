@@ -1307,6 +1307,88 @@ def _characterize_segment(
         characteristics.append('file_focused')
     
     return characteristics
+
+
+def _generate_segment_description(
+    segment_prompts: pd.DataFrame,
+    characteristics: List[str]
+) -> str:
+    """Generate human-readable description of segment."""
+    
+    # Dominant prompt type
+    dominant_types = segment_prompts['prompt_type'].value_counts().head(2)
+    
+    # Build description
+    if 'short_prompts' in characteristics and 'high_question_ratio' in characteristics:
+        desc = "Rapid iteration: quick questions and feedback"
+    elif 'long_prompts' in characteristics and 'high_specificity' in characteristics:
+        desc = "Deep engagement: detailed prompts with specific requirements"
+    elif 'iterative' in characteristics:
+        desc = "Iterative refinement: back-and-forth improvements"
+    elif 'exploratory' in characteristics:
+        desc = "Exploratory phase: understanding and clarification"
+    elif 'file_focused' in characteristics:
+        desc = "File-based work: processing uploaded content"
+    else:
+        # Generic description based on dominant type
+        if len(dominant_types) > 0:
+            primary = dominant_types.index[0]
+            desc = f"General work: primarily {primary}"
+        else:
+            desc = "Mixed interaction patterns"
+    
+    return desc
+
+
+def _build_segment_dict(
+    segment_id: int,
+    start_prompt: int,
+    end_prompt: int,
+    segment_prompts: pd.DataFrame,
+    segment_timeline: pd.DataFrame,
+    total_prompts: int,
+    characteristics: List[str] = None,
+    description: str = None
+) -> Dict[str, Any]:
+    """Build standardized segment dictionary."""
+    
+    if characteristics is None:
+        characteristics = []
+    if description is None:
+        description = f"Segment {segment_id}"
+    
+    # Get chunk indices
+    chunk_indices = segment_prompts['chunk_index'].tolist()
+    start_chunk = min(chunk_indices) if chunk_indices else 0
+    end_chunk = max(chunk_indices) if chunk_indices else 0
+    
+    # Calculate statistics
+    user_timeline = segment_timeline[segment_timeline['role'] == 'user']
+    model_timeline = segment_timeline[segment_timeline['role'] == 'model']
+    
+    # Dominant prompt types
+    dominant_types = segment_prompts['prompt_type'].value_counts().head(3).index.tolist()
+    
+    return {
+        'segment_id': segment_id,
+        'start_prompt': start_prompt,
+        'end_prompt': end_prompt,
+        'start_chunk': start_chunk,
+        'end_chunk': end_chunk,
+        'sequence_start': start_prompt / total_prompts,
+        'sequence_end': (end_prompt + 1) / total_prompts,
+        'message_count': len(segment_timeline),
+        'user_messages': len(user_timeline),
+        'model_messages': len(model_timeline),
+        'total_tokens': segment_timeline['tokens'].sum(),
+        'avg_tokens_per_message': segment_timeline['tokens'].mean(),
+        'avg_word_count': segment_prompts['word_count'].mean(),
+        'avg_specificity': segment_prompts['specificity_score'].mean(),
+        'dominant_prompt_types': dominant_types,
+        'has_file_uploads': segment_prompts['has_file_context'].any(),
+        'characteristics': characteristics,
+        'description': description
+    }
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
