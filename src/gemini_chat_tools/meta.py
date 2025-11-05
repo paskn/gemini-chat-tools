@@ -1101,6 +1101,120 @@ def _segment_token_burst(
         ))
     
     return segments
+
+
+def _segment_topic_shift(
+    timeline: pd.DataFrame,
+    prompt_df: pd.DataFrame,
+    n_segments: int = None
+) -> List[Dict[str, Any]]:
+    """Detect segments based on topic/prompt pattern shifts."""
+    
+    import numpy as np
+    
+    # Analyze prompt type distribution over a rolling window
+    window_size = max(5, len(prompt_df) // 15)
+    
+    # Track multiple signals that indicate topic shift
+    signals = []
+    
+    for i in range(len(prompt_df)):
+        start = max(0, i - window_size // 2)
+        end = min(len(prompt_df), i + window_size // 2)
+        window = prompt_df.iloc[start:end]
+        
+        # Signal 1: Prompt type diversity (entropy)
+        type_counts = window['prompt_type'].value_counts()
+        type_probs = type_counts / len(window)
+        entropy = -sum(p * np.log2(p) for p in type_probs if p > 0)
+        
+        # Signal 2: Average specificity
+        avg_spec = window['specificity_score'].mean()
+        
+        # Signal 3: Question ratio
+        question_ratio = window['has_question'].sum() / len(window)
+        
+        signals.append({
+            'index': i,
+            'entropy': entropy,
+            'specificity': avg_spec,
+            'question_ratio': question_ratio
+        })
+    
+    # Detect boundaries where signals change significantly
+    boundaries = [0]
+    
+    for i in range(window_size, len(signals) - window_size):
+        before = signals[i - window_size:i]
+        after = signals[i:i + window_size]
+        
+        # Check for significant change in any signal
+        entropy_change = abs(np.mean([s['entropy'] for s in after]) - 
+                            np.mean([s['entropy'] for s in before]))
+        spec_change = abs(np.mean([s['specificity'] for s in after]) - 
+                         np.mean([s['specificity'] for s in before]))
+        question_change = abs(np.mean([s['question_ratio'] for s in after]) - 
+                             np.mean([s['question_ratio'] for s in before]))
+        
+        # Combined signal change
+        total_change = entropy_change + spec_change * 2 + question_change
+        
+        # If change is significant, this might be a boundary
+        if total_change > 0.5:  # Threshold
+            # Avoid boundaries too close together
+            if not boundaries or i - boundaries[-1] >= window_size:
+                boundaries.append(i)
+    
+    boundaries.append(len(prompt_df))
+    
+    # If we have too few or too many segments, adjust
+    if n_segments is not None:
+        if len(boundaries) - 1 < n_segments:
+            # Fall back to equal chunks if we didn't find enough boundaries
+            return _segment_equal_chunks(timeline, prompt_df, n_segments)
+        elif len(boundaries) - 1 > n_segments:
+            # Keep most significant boundaries
+            # Calculate significance based on total change at each boundary
+            significance = []
+            for i in range(1, len(boundaries) - 1):
+                idx = boundaries[i]
+                if idx >= window_size and idx < len(signals) - window_size:
+                    before = signals[idx - window_size:idx]
+                    after = signals[idx:idx + window_size]
+                    change = abs(np.mean([s['entropy'] for s in after]) - 
+                               np.mean([s['entropy'] for s in before]))
+                    significance.append((i, change))
+            
+            significance.sort(key=lambda x: x[1], reverse=True)
+            keep_indices = [0] + [sig[0] for sig in significance[:n_segments-1]] + [len(boundaries) - 1]
+            keep_indices.sort()
+            boundaries = [boundaries[i] for i in keep_indices]
+    
+    # Build segments
+    segments = []
+    for i in range(len(boundaries) - 1):
+        start_idx = boundaries[i]
+        end_idx = boundaries[i + 1]
+        
+        segment_prompts = prompt_df.iloc[start_idx:end_idx]
+        chunk_indices = segment_prompts['chunk_index'].tolist()
+        segment_timeline = timeline[timeline['chunk_index'].isin(chunk_indices)]
+        
+        # Characterize the segment
+        characteristics = _characterize_segment(segment_prompts, prompt_df)
+        
+        segments.append(_build_segment_dict(
+            segment_id=i + 1,
+            start_prompt=start_idx,
+            end_prompt=end_idx - 1,
+            segment_prompts=segment_prompts,
+            segment_timeline=segment_timeline,
+            total_prompts=len(prompt_df),
+            characteristics=characteristics,
+            description=_generate_segment_description(segment_prompts, characteristics)
+        ))
+    
+    return segments
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
