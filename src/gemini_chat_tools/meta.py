@@ -27,7 +27,9 @@ def analyze_prompt_patterns(chunks: List[Dict[str, Any]]) -> pd.DataFrame:
             - has_question (bool): Contains '?'
             - is_command (bool): Starts with imperative verb
             - is_followup (bool): References previous conversation
-            - specificity_score (float): 0-1, based on concrete details
+            - has_file_context (bool): Whether prompt follows file upload chunks
+            - file_context_tokens (int): Total tokens from uploaded files
+            - specificity_score (float): 0-1, based on concrete details (includes file context)
             - prompt_type (str): Categorized type of prompt
             
     Example:
@@ -94,6 +96,9 @@ def analyze_prompt_patterns(chunks: List[Dict[str, Any]]) -> pd.DataFrame:
         if not text.strip():
             continue
         
+        # Check for file upload context (look backward for file uploads)
+        has_file_context, file_context_tokens = _detect_file_upload_context(chunks, i)
+        
         # Basic metrics
         prompt_length = len(text)
         words = text.split()
@@ -121,7 +126,9 @@ def analyze_prompt_patterns(chunks: List[Dict[str, Any]]) -> pd.DataFrame:
         specificity_score = _calculate_specificity_score(
             text, 
             word_count, 
-            SPECIFICITY_INDICATORS
+            SPECIFICITY_INDICATORS,
+            has_file_context,
+            file_context_tokens
         )
         
         # Categorize prompt type
@@ -140,6 +147,8 @@ def analyze_prompt_patterns(chunks: List[Dict[str, Any]]) -> pd.DataFrame:
             'has_question': has_question,
             'is_command': is_command,
             'is_followup': is_followup,
+            'has_file_context': has_file_context,
+            'file_context_tokens': file_context_tokens,
             'specificity_score': specificity_score,
             'prompt_type': prompt_type,
         })
@@ -147,10 +156,53 @@ def analyze_prompt_patterns(chunks: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(prompt_data)
 
 
+def _detect_file_upload_context(chunks: List[Dict[str, Any]], current_index: int) -> tuple[bool, int]:
+    """Detect if a prompt follows file upload chunks.
+    
+    This function looks backward from the current chunk to see if there are
+    recent file upload chunks (driveDocument or driveImage) that provide
+    context for this prompt.
+    
+    Args:
+        chunks: List of all chunks
+        current_index: Index of the current prompt chunk
+        
+    Returns:
+        Tuple of (has_file_context, total_tokens_from_files)
+    """
+    has_file_context = False
+    file_context_tokens = 0
+    
+    # Look backward up to 5 chunks (but stop at model responses)
+    lookback_limit = 5
+    for offset in range(1, lookback_limit + 1):
+        if current_index - offset < 0:
+            break
+        
+        prev_chunk = chunks[current_index - offset]
+        prev_role = prev_chunk.get('role', '')
+        
+        # Stop if we hit a model response (files are uploaded in sequence before user message)
+        if prev_role == 'model':
+            break
+        
+        # Check for file uploads (both documents and images)
+        has_drive_doc = 'driveDocument' in prev_chunk
+        has_drive_image = 'driveImage' in prev_chunk
+        
+        if has_drive_doc or has_drive_image:
+            has_file_context = True
+            file_context_tokens += prev_chunk.get('tokenCount', 0)
+    
+    return has_file_context, file_context_tokens
+
+
 def _calculate_specificity_score(
     text: str, 
     word_count: int, 
-    indicators: Dict[str, str]
+    indicators: Dict[str, str],
+    has_file_context: bool = False,
+    file_context_tokens: int = 0
 ) -> float:
     """Calculate a specificity score for a prompt (0-1).
     
@@ -161,11 +213,14 @@ def _calculate_specificity_score(
     - File names
     - Specific terms
     - Longer length
+    - File upload context (provides concrete material to reference)
     
     Args:
         text: The prompt text
         word_count: Number of words in prompt
         indicators: Dictionary of indicator names to regex patterns
+        has_file_context: Whether this prompt follows file upload chunks
+        file_context_tokens: Total tokens from uploaded files
         
     Returns:
         Float between 0 and 1
@@ -191,6 +246,22 @@ def _calculate_specificity_score(
     quoted_count = len(re.findall(r'["\'].*?["\']', text))
     if quoted_count > 0:
         score += min(quoted_count * 0.5, 2.0)  # Up to 2 points for quotes
+    
+    # 4. File upload context bonus (uploaded files provide concrete context)
+    # Even short prompts like "Please review this draft" are specific when
+    # they reference uploaded files with thousands of tokens
+    if has_file_context:
+        # Base bonus for having file context
+        score += 2.0
+        
+        # Additional bonus based on amount of uploaded content
+        # 0-1000 tokens: +0 points
+        # 1000-5000 tokens: +0 to +1 points (linear)
+        # 5000+ tokens: +1 point
+        if file_context_tokens >= 5000:
+            score += 1.0
+        elif file_context_tokens > 1000:
+            score += (file_context_tokens - 1000) / 4000  # Linear scale
     
     # Normalize to 0-1
     return min(score / max_score, 1.0)
