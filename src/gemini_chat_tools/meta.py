@@ -1,6 +1,150 @@
+"""Meta-analysis functions for analyzing Gemini chat conversations.
+
+This module provides tools to analyze conversation patterns, prompt quality,
+and interaction dynamics in Gemini chat exports.
+"""
+
 import re
 from typing import List, Dict, Any
 import pandas as pd
+
+
+def analyze_prompt_patterns(chunks: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Analyze patterns in user prompts throughout the conversation.
+    
+    This function extracts various features from user prompts to understand
+    how prompt style and quality evolved over the conversation.
+    
+    Args:
+        chunks: List of chunk dictionaries from Gemini chat JSON
+        
+    Returns:
+        pandas DataFrame with columns:
+            - chunk_index (int): Position in conversation
+            - user_text (str): The prompt text
+            - prompt_length (int): Character count
+            - word_count (int): Number of words
+            - has_question (bool): Contains '?'
+            - is_command (bool): Starts with imperative verb
+            - is_followup (bool): References previous conversation
+            - specificity_score (float): 0-1, based on concrete details
+            - prompt_type (str): Categorized type of prompt
+            
+    Example:
+        >>> from gemini_chat_tools import analyze_gemini_chat
+        >>> from gemini_chat_tools.meta import analyze_prompt_patterns
+        >>> 
+        >>> analysis = analyze_gemini_chat("chat.json")
+        >>> prompt_df = analyze_prompt_patterns(analysis._chunks)
+        >>> 
+        >>> # Analyze prompt evolution
+        >>> print(f"Average prompt length: {prompt_df['prompt_length'].mean():.1f}")
+        >>> print(f"Question prompts: {prompt_df['has_question'].sum()}")
+    """
+    
+    # Imperative verbs commonly used in commands
+    IMPERATIVE_VERBS = [
+        'fix', 'change', 'rewrite', 'revise', 'edit', 'update', 'modify',
+        'improve', 'clarify', 'explain', 'describe', 'add', 'remove',
+        'delete', 'insert', 'replace', 'make', 'create', 'generate',
+        'show', 'tell', 'give', 'provide', 'suggest', 'list', 'check',
+        'review', 'analyze', 'identify', 'find', 'address', 'respond'
+    ]
+    
+    # Follow-up patterns
+    FOLLOWUP_PATTERNS = [
+        r'\bthat\s+(?:doesn\'t|does\s+not|won\'t|will\s+not)\s+work\b',
+        r'\btry\s+again\b',
+        r'\bwhat\s+about\b',
+        r'\bhow\s+about\b',
+        r'\binstead\b',
+        r'\bno[,\s]',
+        r'\bactually\b',
+        r'\bwait\b',
+        r'\bnever\s*mind\b',
+        r'\blet\'s\s+try\b',
+        r'\b(?:the\s+)?(?:previous|last|earlier)\b',
+        r'\b(?:that|this)\s+(?:response|suggestion|version|one)\b',
+        r'\bbut\s+',
+        r'\bhowever\b',
+    ]
+    
+    # Specificity indicators (things that make a prompt more concrete)
+    SPECIFICITY_INDICATORS = {
+        'quoted_text': r'["\'].*?["\']',  # Quoted strings
+        'line_numbers': r'\bline\s+\d+\b|\bl\.\s*\d+\b',  # Line references
+        'section_refs': r'\b(?:section|paragraph|page|chapter)\s+\d+\b',  # Section refs
+        'named_sections': r'\b(?:introduction|methods?|results?|discussion|conclusion)\b',  # Paper sections
+        'reviewer_refs': r'\b(?:reviewer|R)\s*[123]\b',  # Reviewer references
+        'file_names': r'\b\w+\.(?:csv|xlsx?|txt|pdf|py|r)\b',  # File names
+        'specific_terms': r'\b(?:table|figure|equation|variable|metric|parameter)\s+\w+\b',  # Specific elements
+    }
+    
+    prompt_data = []
+    
+    for i, chunk in enumerate(chunks):
+        role = chunk.get('role', '')
+        text = chunk.get('text', '')
+        
+        # Only analyze user prompts
+        if role != 'user':
+            continue
+        
+        # Skip empty text (file upload chunks)
+        if not text.strip():
+            continue
+        
+        # Basic metrics
+        prompt_length = len(text)
+        words = text.split()
+        word_count = len(words)
+        has_question = '?' in text
+        
+        # Check for imperative command
+        is_command = False
+        text_lower = text.lower().strip()
+        # Check first few words for imperative verbs
+        first_words = text_lower.split()[:3]
+        for verb in IMPERATIVE_VERBS:
+            if any(word.startswith(verb) for word in first_words):
+                is_command = True
+                break
+        
+        # Check for follow-up patterns
+        is_followup = False
+        for pattern in FOLLOWUP_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                is_followup = True
+                break
+        
+        # Calculate specificity score (0-1)
+        specificity_score = _calculate_specificity_score(
+            text, 
+            word_count, 
+            SPECIFICITY_INDICATORS
+        )
+        
+        # Categorize prompt type
+        prompt_type = _categorize_prompt_type(
+            text, 
+            has_question, 
+            is_command, 
+            is_followup
+        )
+        
+        prompt_data.append({
+            'chunk_index': i,
+            'user_text': text,
+            'prompt_length': prompt_length,
+            'word_count': word_count,
+            'has_question': has_question,
+            'is_command': is_command,
+            'is_followup': is_followup,
+            'specificity_score': specificity_score,
+            'prompt_type': prompt_type,
+        })
+    
+    return pd.DataFrame(prompt_data)
 
 
 def _calculate_specificity_score(
@@ -171,3 +315,8 @@ def _categorize_prompt_type(
         return 'command'
     else:
         return 'general'
+
+
+__all__ = [
+    'analyze_prompt_patterns',
+]
