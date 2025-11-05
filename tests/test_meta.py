@@ -548,3 +548,54 @@ def test_detect_prompt_fatigue_file_context_exclusion():
     # Only the first "review this" should be lazy
     assert fatigue['lazy_prompt_count'] == 1
     assert fatigue['lazy_prompts'][0] == 0  # First chunk index
+def test_plot_prompt_quality_trend_empty_dataframe(capsys):
+    """Test plot function handles empty DataFrame gracefully."""
+    empty_df = pd.DataFrame(columns=['chunk_index', 'user_text', 'word_count', 
+                                     'specificity_score', 'has_file_context'])
+    
+    plot_prompt_quality_trend(empty_df)
+    
+    # Should print message about no prompts
+    captured = capsys.readouterr()
+    assert "No prompts to plot" in captured.out
+
+
+def test_plot_prompt_quality_trend_with_lazy_prompts():
+    """Test plot function with lazy prompts highlighted."""
+    chunks = [
+        {'role': 'user', 'text': 'This is a detailed prompt with line 45 references.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'Another comprehensive prompt about methodology section.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'fix this', 'tokenCount': 5},  # Lazy
+        {'role': 'user', 'text': 'ok', 'tokenCount': 5},  # Lazy
+        {'role': 'user', 'text': 'Please explain the statistical approach in detail.', 'tokenCount': 10},
+        {'role': 'user', 'text': 'thanks', 'tokenCount': 5},  # Lazy
+    ]
+    
+    prompt_df = analyze_prompt_patterns(chunks)
+    
+    # Should run without errors
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        plot_prompt_quality_trend(prompt_df, show_lazy_prompts=True)
+        plot_prompt_quality_trend(prompt_df, show_lazy_prompts=False)
+    except ImportError:
+        pass  # Skip if matplotlib not available
+
+
+def test_plot_prompt_quality_trend_custom_parameters():
+    """Test plot function with custom parameters."""
+    chunks = [
+        {'role': 'user', 'text': f'Prompt number {i} with varying length.', 'tokenCount': 10}
+        for i in range(20)
+    ]
+    
+    prompt_df = analyze_prompt_patterns(chunks)
+    
+    # Test with custom window size and figure size
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        plot_prompt_quality_trend(prompt_df, window_size=3, figsize=(12, 10))
+    except ImportError:
+        pass  # Skip if matplotlib not available
