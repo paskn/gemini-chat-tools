@@ -921,6 +921,78 @@ def plot_prompt_quality_trend(prompt_df: pd.DataFrame,
     plt.show()
 
 
+def identify_conversation_segments(
+    timeline: pd.DataFrame,
+    prompt_df: pd.DataFrame,
+    method: str = 'token_burst',
+    n_segments: int = None
+) -> List[Dict[str, Any]]:
+    """Group conversation into distinct segments based on activity patterns.
+    
+    This function identifies natural phases in the conversation by detecting
+    patterns like topic shifts, file upload boundaries, or token usage bursts.
+    
+    Args:
+        timeline: DataFrame from ChatAnalysis.timeline()
+        prompt_df: DataFrame from analyze_prompt_patterns()
+        method: Segmentation method:
+            - 'token_burst': High-activity clusters (default)
+            - 'topic_shift': Major topic changes based on prompt patterns
+            - 'file_upload': Split on file upload boundaries
+            - 'equal_chunks': Divide into N equal-sized segments
+        n_segments: Number of segments (required for 'equal_chunks', optional for others)
+        
+    Returns:
+        List of segment dictionaries with:
+            - segment_id (int): Segment number (1 to N)
+            - start_prompt (int): First prompt number in segment
+            - end_prompt (int): Last prompt number in segment
+            - start_chunk (int): First chunk index in segment
+            - end_chunk (int): Last chunk index in segment
+            - sequence_start (float): Normalized start position (0.0-1.0)
+            - sequence_end (float): Normalized end position (0.0-1.0)
+            - message_count (int): Total messages in segment
+            - user_messages (int): User message count
+            - model_messages (int): Model message count
+            - total_tokens (int): Total tokens in segment
+            - avg_tokens_per_message (float): Average tokens per message
+            - avg_word_count (float): Average user prompt word count
+            - avg_specificity (float): Average user prompt specificity
+            - dominant_prompt_types (List[str]): Most common prompt types
+            - has_file_uploads (bool): Whether segment includes file uploads
+            - characteristics (List[str]): Detected segment characteristics
+            - description (str): Human-readable segment description
+            
+    Example:
+        >>> from gemini_chat_tools import analyze_gemini_chat
+        >>> from gemini_chat_tools.meta import analyze_prompt_patterns, identify_conversation_segments
+        >>> 
+        >>> analysis = analyze_gemini_chat("chat.json")
+        >>> timeline = analysis.timeline()
+        >>> prompt_df = analyze_prompt_patterns(analysis._chunks)
+        >>> 
+        >>> # Detect segments by topic shift
+        >>> segments = identify_conversation_segments(timeline, prompt_df, method='topic_shift')
+        >>> for seg in segments:
+        >>>     print(f"Segment {seg['segment_id']}: {seg['description']}")
+    """
+    
+    if method == 'equal_chunks':
+        if n_segments is None:
+            n_segments = 3  # Default to thirds
+        return _segment_equal_chunks(timeline, prompt_df, n_segments)
+    
+    elif method == 'token_burst':
+        return _segment_token_burst(timeline, prompt_df, n_segments)
+    
+    elif method == 'topic_shift':
+        return _segment_topic_shift(timeline, prompt_df, n_segments)
+    
+    elif method == 'file_upload':
+        return _segment_file_upload(timeline, prompt_df)
+    
+    else:
+        raise ValueError(f"Unknown segmentation method: {method}")
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
