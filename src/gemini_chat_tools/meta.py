@@ -605,6 +605,238 @@ def _identify_lazy_prompts(prompt_df: pd.DataFrame) -> pd.DataFrame:
     return lazy_prompts
 
 
+def _plot_prompt_type_distribution(type_counts: Dict[str, int], total: int):
+    """Create visualization of prompt type distribution.
+    
+    Args:
+        type_counts: Dictionary mapping prompt type to count
+        total: Total number of prompts
+    """
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print("Warning: matplotlib not available for plotting")
+        return
+    
+    # Sort by count (descending)
+    sorted_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)
+    types = [t[0] for t in sorted_types]
+    counts = [t[1] for t in sorted_types]
+    percentages = [(c / total) * 100 for c in counts]
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle('Prompt Type Distribution', fontsize=16, fontweight='bold')
+    
+    # 1. Bar chart
+    colors = plt.cm.tab10(np.linspace(0, 1, len(types)))
+    bars = ax1.barh(types, counts, color=colors)
+    ax1.set_xlabel('Count', fontsize=11)
+    ax1.set_ylabel('Prompt Type', fontsize=11)
+    ax1.set_title('Prompt Type Frequency', fontsize=13)
+    ax1.grid(True, alpha=0.3, axis='x')
+    
+    # Add count labels on bars
+    for i, (bar, count, pct) in enumerate(zip(bars, counts, percentages)):
+        width = bar.get_width()
+        ax1.text(width, bar.get_y() + bar.get_height()/2, 
+                f' {count} ({pct:.1f}%)',
+                ha='left', va='center', fontsize=9)
+    
+    # 2. Pie chart
+    ax2.pie(counts, labels=types, autopct='%1.1f%%', colors=colors, startangle=90)
+    ax2.set_title('Prompt Type Proportions', fontsize=13)
+    
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_prompt_quality_trend(prompt_df: pd.DataFrame, 
+                             show_lazy_prompts: bool = True,
+                             window_size: int = 5,
+                             figsize: tuple = (14, 8)) -> None:
+    """Create comprehensive visualization of prompt quality trends over time.
+    
+    This function generates a multi-panel plot showing:
+    - Word count over time with moving average
+    - Specificity score over time with quality zones
+    - Segment-level comparison (first vs middle vs last)
+    - Lazy prompt highlights on timeline
+    
+    Args:
+        prompt_df: DataFrame from analyze_prompt_patterns()
+        show_lazy_prompts: If True, highlight lazy prompts on plots
+        window_size: Size of rolling window for moving averages
+        figsize: Figure size as (width, height) tuple
+        
+    Example:
+        >>> from gemini_chat_tools import analyze_gemini_chat
+        >>> from gemini_chat_tools.meta import analyze_prompt_patterns, plot_prompt_quality_trend
+        >>> 
+        >>> analysis = analyze_gemini_chat("chat.json")
+        >>> prompt_df = analyze_prompt_patterns(analysis._chunks)
+        >>> plot_prompt_quality_trend(prompt_df)
+    """
+    
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        print("Error: matplotlib required for plotting. Install with: uv add matplotlib")
+        return
+    
+    if len(prompt_df) == 0:
+        print("No prompts to plot")
+        return
+    
+    # Detect lazy prompts if requested
+    lazy_prompts = None
+    if show_lazy_prompts:
+        lazy_prompts = _identify_lazy_prompts(prompt_df)
+    
+    # Detect fatigue for segment stats
+    fatigue = detect_prompt_fatigue(prompt_df)
+    
+    # Create figure with 4 subplots
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=figsize)
+    fig.suptitle('Prompt Quality Trend Analysis', fontsize=16, fontweight='bold')
+    
+    # Setup x-axis (conversation progress)
+    x = np.arange(len(prompt_df))
+    
+    # === Panel 1: Word Count Over Time ===
+    word_counts = prompt_df['word_count'].values
+    
+    ax1.plot(x, word_counts, 'o-', alpha=0.5, markersize=4, label='Actual', color='steelblue')
+    
+    # Add rolling average
+    if len(word_counts) >= window_size:
+        rolling_avg = pd.Series(word_counts).rolling(window=window_size, center=True).mean()
+        ax1.plot(x, rolling_avg, linewidth=2, label=f'{window_size}-prompt average', color='darkblue')
+    
+    # Highlight lazy prompts
+    if show_lazy_prompts and len(lazy_prompts) > 0:
+        lazy_indices = [list(prompt_df['chunk_index']).index(idx) for idx in lazy_prompts['chunk_index'] 
+                       if idx in list(prompt_df['chunk_index'])]
+        if lazy_indices:
+            lazy_word_counts = [word_counts[i] for i in lazy_indices]
+            ax1.scatter(lazy_indices, lazy_word_counts, color='red', s=100, 
+                       marker='x', linewidths=2, label='Lazy prompts', zorder=5)
+    
+    ax1.set_xlabel('Prompt Number', fontsize=10)
+    ax1.set_ylabel('Word Count', fontsize=10)
+    ax1.set_title('Prompt Length Over Time', fontsize=12, fontweight='bold')
+    ax1.legend(fontsize=9)
+    ax1.grid(True, alpha=0.3)
+    
+    # === Panel 2: Specificity Over Time ===
+    specificity = prompt_df['specificity_score'].values
+    
+    # Create quality zones (background shading)
+    ax2.axhspan(0, 0.2, alpha=0.1, color='red', label='Low quality')
+    ax2.axhspan(0.2, 0.4, alpha=0.1, color='yellow', label='Medium quality')
+    ax2.axhspan(0.4, 1.0, alpha=0.1, color='green', label='High quality')
+    
+    ax2.plot(x, specificity, 'o-', alpha=0.5, markersize=4, label='Actual', color='darkorange')
+    
+    # Add rolling average
+    if len(specificity) >= window_size:
+        rolling_avg = pd.Series(specificity).rolling(window=window_size, center=True).mean()
+        ax2.plot(x, rolling_avg, linewidth=2, label=f'{window_size}-prompt average', color='darkred')
+    
+    # Highlight lazy prompts
+    if show_lazy_prompts and len(lazy_prompts) > 0:
+        lazy_indices = [list(prompt_df['chunk_index']).index(idx) for idx in lazy_prompts['chunk_index'] 
+                       if idx in list(prompt_df['chunk_index'])]
+        if lazy_indices:
+            lazy_specificity = [specificity[i] for i in lazy_indices]
+            ax2.scatter(lazy_indices, lazy_specificity, color='red', s=100, 
+                       marker='x', linewidths=2, label='Lazy prompts', zorder=5)
+    
+    ax2.set_xlabel('Prompt Number', fontsize=10)
+    ax2.set_ylabel('Specificity Score (0-1)', fontsize=10)
+    ax2.set_title('Prompt Specificity Over Time', fontsize=12, fontweight='bold')
+    ax2.set_ylim(-0.05, 1.05)
+    ax2.legend(fontsize=9, loc='upper right')
+    ax2.grid(True, alpha=0.3)
+    
+    # === Panel 3: Segment Comparison ===
+    segment_stats = fatigue['segment_stats']
+    segment_numbers = [s['segment_number'] for s in segment_stats]
+    avg_words = [s['avg_word_count'] for s in segment_stats]
+    avg_spec = [s['avg_specificity'] for s in segment_stats]
+    
+    x_seg = np.arange(len(segment_numbers))
+    width = 0.35
+    
+    bars1 = ax3.bar(x_seg - width/2, avg_words, width, label='Avg Word Count', color='steelblue')
+    ax3_twin = ax3.twinx()
+    bars2 = ax3_twin.bar(x_seg + width/2, avg_spec, width, label='Avg Specificity', color='darkorange')
+    
+    ax3.set_xlabel('Conversation Segment', fontsize=10)
+    ax3.set_ylabel('Average Word Count', fontsize=10, color='steelblue')
+    ax3_twin.set_ylabel('Average Specificity', fontsize=10, color='darkorange')
+    ax3.set_title('Quality Metrics by Segment', fontsize=12, fontweight='bold')
+    ax3.set_xticks(x_seg)
+    ax3.set_xticklabels([f'Segment {i}' for i in segment_numbers])
+    ax3.tick_params(axis='y', labelcolor='steelblue')
+    ax3_twin.tick_params(axis='y', labelcolor='darkorange')
+    ax3_twin.set_ylim(0, 1)
+    
+    # Add combined legend
+    lines1, labels1 = ax3.get_legend_handles_labels()
+    lines2, labels2 = ax3_twin.get_legend_handles_labels()
+    ax3.legend(lines1 + lines2, labels1 + labels2, fontsize=9, loc='upper right')
+    
+    ax3.grid(True, alpha=0.3, axis='y')
+    
+    # === Panel 4: Fatigue Summary ===
+    ax4.axis('off')
+    
+    # Create summary text
+    summary_lines = [
+        "FATIGUE DETECTION SUMMARY",
+        "=" * 40,
+        "",
+        f"Total Prompts: {len(prompt_df)}",
+        f"Lazy Prompts: {fatigue['lazy_prompt_count']} ({fatigue['lazy_prompt_count']/len(prompt_df)*100:.1f}%)",
+        "",
+        "Length Trend:",
+        f"  First segment: {fatigue['avg_length_first_segment']:.1f} words",
+        f"  Last segment: {fatigue['avg_length_last_segment']:.1f} words",
+        f"  Change: {fatigue['length_decline_percentage']:+.1f}%",
+        "",
+        "Specificity Trend:",
+        f"  First segment: {fatigue['avg_specificity_first_segment']:.3f}",
+        f"  Last segment: {fatigue['avg_specificity_last_segment']:.3f}",
+        f"  Change: {fatigue['specificity_decline_percentage']:+.1f}%",
+        "",
+        f"Fatigue Detected: {'YES ⚠️' if fatigue['has_fatigue'] else 'NO ✓'}",
+    ]
+    
+    # Color-code the fatigue detection result
+    fatigue_color = 'red' if fatigue['has_fatigue'] else 'green'
+    
+    summary_text = '\n'.join(summary_lines)
+    ax4.text(0.05, 0.95, summary_text, transform=ax4.transAxes,
+            fontfamily='monospace', fontsize=9, verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+    
+    # Add fatigue indicator box
+    if fatigue['has_fatigue']:
+        ax4.text(0.5, 0.05, 'FATIGUE DETECTED', transform=ax4.transAxes,
+                fontsize=14, fontweight='bold', color='white',
+                horizontalalignment='center', verticalalignment='bottom',
+                bbox=dict(boxstyle='round', facecolor='red', alpha=0.8))
+    else:
+        ax4.text(0.5, 0.05, 'NO FATIGUE', transform=ax4.transAxes,
+                fontsize=14, fontweight='bold', color='white',
+                horizontalalignment='center', verticalalignment='bottom',
+                bbox=dict(boxstyle='round', facecolor='green', alpha=0.8))
+    
+    plt.tight_layout()
+    plt.show()
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
