@@ -732,6 +732,8 @@ def _plot_prompt_type_distribution(type_counts: Dict[str, int], total: int):
     
     plt.tight_layout()
     plt.show()
+    
+    return fig
 
 
 def plot_prompt_quality_trend(prompt_df: pd.DataFrame, 
@@ -1734,11 +1736,267 @@ def extract_conversation_topics(chunks: List[Dict[str, Any]]) -> pd.DataFrame:
     return pd.DataFrame(topic_data)
 
 
+def plot_conversation_flow(
+    timeline: pd.DataFrame,
+    prompt_df: pd.DataFrame,
+    segments: List[Dict[str, Any]] = None,
+    topics_df: pd.DataFrame = None,
+    figsize: tuple = (16, 12),
+    show_file_uploads: bool = True,
+    show_segment_boundaries: bool = True
+) -> None:
+    """Create comprehensive multi-panel visualization of conversation flow.
+    
+    This function generates a detailed timeline visualization showing:
+    - Message flow (user vs model) with token usage
+    - Prompt quality metrics over time
+    - Topic distribution (if provided)
+    - Cumulative token usage with segment boundaries
+    - File upload markers
+    - Turning points
+    
+    Args:
+        timeline: DataFrame from ChatAnalysis.timeline()
+        prompt_df: DataFrame from analyze_prompt_patterns()
+        segments: Optional list from identify_conversation_segments()
+        topics_df: Optional DataFrame from extract_conversation_topics()
+        figsize: Figure size as (width, height) tuple
+        show_file_uploads: If True, mark file upload points
+        show_segment_boundaries: If True, draw vertical lines at segment boundaries
+        
+    Example:
+        >>> from gemini_chat_tools import analyze_gemini_chat
+        >>> from gemini_chat_tools.meta import (
+        >>>     analyze_prompt_patterns,
+        >>>     identify_conversation_segments,
+        >>>     extract_conversation_topics,
+        >>>     plot_conversation_flow
+        >>> )
+        >>> 
+        >>> analysis = analyze_gemini_chat("chat.json")
+        >>> timeline = analysis.timeline()
+        >>> prompt_df = analyze_prompt_patterns(analysis._chunks)
+        >>> segments = identify_conversation_segments(timeline, prompt_df, method='topic_shift')
+        >>> topics_df = extract_conversation_topics(analysis._chunks)
+        >>> 
+        >>> plot_conversation_flow(timeline, prompt_df, segments, topics_df)
+    """
+    
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+        from matplotlib.ticker import MaxNLocator
+        import numpy as np
+    except ImportError:
+        print("Error: matplotlib required for plotting. Install with: uv add matplotlib")
+        return
+    
+    if len(timeline) == 0:
+        print("No timeline data to plot")
+        return
+    
+    # Create figure with 4 subplots
+    fig, axes = plt.subplots(4, 1, figsize=figsize, sharex=True)
+    fig.suptitle('Conversation Flow Analysis', fontsize=16, fontweight='bold')
+    
+    # Setup x-axis based on sequence position (0-1)
+    x_timeline = timeline['sequence_position'].values
+    
+    # Map prompt_df chunk indices to sequence positions
+    prompt_positions = []
+    for chunk_idx in prompt_df['chunk_index']:
+        matching_row = timeline[timeline['chunk_index'] == chunk_idx]
+        if len(matching_row) > 0:
+            prompt_positions.append(matching_row.iloc[0]['sequence_position'])
+        else:
+            prompt_positions.append(None)
+    prompt_positions = np.array(prompt_positions)
+    valid_prompts = ~pd.isna(prompt_positions)
+    
+    # === Panel 1: Message Timeline with Token Bars ===
+    ax1 = axes[0]
+    
+    # Separate user and model messages
+    user_timeline = timeline[timeline['role'] == 'user']
+    model_timeline = timeline[timeline['role'] == 'model']
+    
+    # Plot as horizontal bars
+    user_x = user_timeline['sequence_position'].values
+    user_tokens = user_timeline['tokens'].values
+    model_x = model_timeline['sequence_position'].values
+    model_tokens = model_timeline['tokens'].values
+    
+    # Normalize token heights for better visualization
+    max_tokens = timeline['tokens'].max()
+    
+    ax1.bar(user_x, user_tokens, width=0.005, color='steelblue', label='User', alpha=0.7)
+    ax1.bar(model_x, model_tokens, width=0.005, color='darkorange', label='Model', alpha=0.7)
+    
+    # Mark file uploads
+    if show_file_uploads:
+        file_uploads = timeline[timeline['has_file_upload'] == True]
+        if len(file_uploads) > 0:
+            upload_x = file_uploads['sequence_position'].values
+            upload_y = file_uploads['tokens'].values
+            ax1.scatter(upload_x, upload_y, marker='^', s=150, color='green', 
+                       edgecolors='darkgreen', linewidths=2, label='File upload', zorder=5)
+    
+    ax1.set_ylabel('Tokens per Message', fontsize=10)
+    ax1.set_title('Message Flow (User vs Model)', fontsize=12, fontweight='bold')
+    ax1.legend(fontsize=9, loc='upper right')
+    ax1.grid(True, alpha=0.3, axis='y')
+    
+    # === Panel 2: Prompt Quality Metrics ===
+    ax2 = axes[1]
+    
+    # Plot word count and specificity on dual axes
+    ax2_twin = ax2.twinx()
+    
+    word_counts = prompt_df['word_count'].values[valid_prompts]
+    specificity = prompt_df['specificity_score'].values[valid_prompts]
+    valid_x = prompt_positions[valid_prompts]
+    
+    line1 = ax2.plot(valid_x, word_counts, 'o-', color='steelblue', 
+                     markersize=4, alpha=0.7, label='Word count')
+    
+    # Add rolling average for word count
+    if len(word_counts) >= 5:
+        window = min(5, len(word_counts) // 10 + 1)
+        rolling_avg = pd.Series(word_counts).rolling(window=window, center=True).mean()
+        ax2.plot(valid_x, rolling_avg, linewidth=2, color='darkblue', 
+                alpha=0.8, label=f'{window}-msg average')
+    
+    line2 = ax2_twin.plot(valid_x, specificity, 's-', color='darkorange', 
+                          markersize=4, alpha=0.7, label='Specificity')
+    
+    # Add rolling average for specificity
+    if len(specificity) >= 5:
+        window = min(5, len(specificity) // 10 + 1)
+        rolling_avg_spec = pd.Series(specificity).rolling(window=window, center=True).mean()
+        ax2_twin.plot(valid_x, rolling_avg_spec, linewidth=2, color='darkred', 
+                     alpha=0.8, label=f'{window}-msg average')
+    
+    ax2.set_ylabel('Word Count', fontsize=10, color='steelblue')
+    ax2_twin.set_ylabel('Specificity Score (0-1)', fontsize=10, color='darkorange')
+    ax2.set_title('Prompt Quality Metrics', fontsize=12, fontweight='bold')
+    ax2.tick_params(axis='y', labelcolor='steelblue')
+    ax2_twin.tick_params(axis='y', labelcolor='darkorange')
+    ax2_twin.set_ylim(-0.05, 1.05)
+    ax2.grid(True, alpha=0.3, axis='y')
+    
+    # Combined legend
+    lines1, labels1 = ax2.get_legend_handles_labels()
+    lines2, labels2 = ax2_twin.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, fontsize=9, loc='upper right')
+    
+    # === Panel 3: Topic Distribution (if provided) ===
+    ax3 = axes[2]
+    
+    if topics_df is not None and len(topics_df) > 0:
+        # Map topics to sequence positions
+        topic_positions = []
+        topic_counts = []
+        for _, row in topics_df.iterrows():
+            chunk_idx = row['chunk_index']
+            matching_row = timeline[timeline['chunk_index'] == chunk_idx]
+            if len(matching_row) > 0:
+                topic_positions.append(matching_row.iloc[0]['sequence_position'])
+                topic_counts.append(row['topic_count'])
+        
+        if topic_positions:
+            ax3.scatter(topic_positions, topic_counts, alpha=0.6, s=50, color='purple')
+            
+            # Add rolling average
+            if len(topic_counts) >= 5:
+                window = min(10, len(topic_counts) // 10 + 1)
+                df_temp = pd.DataFrame({'pos': topic_positions, 'count': topic_counts})
+                df_temp = df_temp.sort_values('pos')
+                rolling_avg = df_temp['count'].rolling(window=window, center=True).mean()
+                ax3.plot(df_temp['pos'], rolling_avg, linewidth=2, color='darkviolet', 
+                        label=f'{window}-msg average')
+            
+            ax3.set_ylabel('Topics per Message', fontsize=10)
+            ax3.set_title('Topic Complexity Over Time', fontsize=12, fontweight='bold')
+            ax3.legend(fontsize=9, loc='upper right')
+            ax3.grid(True, alpha=0.3, axis='y')
+            ax3.yaxis.set_major_locator(MaxNLocator(integer=True))
+        else:
+            ax3.text(0.5, 0.5, 'No topics detected', transform=ax3.transAxes,
+                    ha='center', va='center', fontsize=12, color='gray')
+            ax3.set_ylabel('Topics per Message', fontsize=10)
+            ax3.set_title('Topic Complexity Over Time', fontsize=12, fontweight='bold')
+    else:
+        ax3.text(0.5, 0.5, 'No topic data provided\n(use extract_conversation_topics())', 
+                transform=ax3.transAxes, ha='center', va='center', fontsize=12, color='gray')
+        ax3.set_ylabel('Topics per Message', fontsize=10)
+        ax3.set_title('Topic Complexity Over Time', fontsize=12, fontweight='bold')
+    
+    # === Panel 4: Cumulative Tokens with Segment Boundaries ===
+    ax4 = axes[3]
+    
+    cumulative = timeline['cumulative_tokens'].values
+    ax4.plot(x_timeline, cumulative, linewidth=2, color='darkgreen', label='Cumulative tokens')
+    ax4.fill_between(x_timeline, 0, cumulative, alpha=0.2, color='green')
+    
+    # Add segment boundaries
+    if show_segment_boundaries and segments:
+        colors = plt.cm.Set3(np.linspace(0, 1, len(segments)))
+        
+        for i, seg in enumerate(segments):
+            # Draw vertical line at segment start
+            if i > 0:  # Skip first segment boundary (it's at 0)
+                ax4.axvline(seg['sequence_start'], color='red', linestyle='--', 
+                           alpha=0.7, linewidth=1.5, zorder=10)
+            
+            # Add shaded region for segment
+            x_start = seg['sequence_start']
+            x_end = seg['sequence_end']
+            ax4.axvspan(x_start, x_end, alpha=0.15, color=colors[i])
+            
+            # Add segment label
+            x_mid = (x_start + x_end) / 2
+            y_pos = cumulative.max() * 0.95
+            ax4.text(x_mid, y_pos, f"S{seg['segment_id']}", 
+                    ha='center', va='top', fontsize=9, fontweight='bold',
+                    bbox=dict(boxstyle='round,pad=0.3', facecolor=colors[i], alpha=0.7))
+        
+        # Draw all segment boundaries on other panels too
+        for i, seg in enumerate(segments):
+            if i > 0:
+                for ax in [ax1, ax2, ax3]:
+                    ax.axvline(seg['sequence_start'], color='red', linestyle='--', 
+                              alpha=0.5, linewidth=1, zorder=1)
+    
+    ax4.set_xlabel('Conversation Progress (0.0 = start, 1.0 = end)', fontsize=11)
+    ax4.set_ylabel('Cumulative Tokens', fontsize=10)
+    ax4.set_title('Token Accumulation & Segments', fontsize=12, fontweight='bold')
+    ax4.grid(True, alpha=0.3, axis='y')
+    ax4.set_xlim(0, 1)
+    
+    # Add segment legend if segments provided
+    if segments and show_segment_boundaries:
+        legend_elements = []
+        for seg in segments[:6]:  # Show first 6 segments in legend
+            color = colors[seg['segment_id'] - 1]
+            desc = seg['description'][:30] + '...' if len(seg['description']) > 30 else seg['description']
+            legend_elements.append(mpatches.Patch(color=color, alpha=0.5, 
+                                                 label=f"S{seg['segment_id']}: {desc}"))
+        if len(segments) > 6:
+            legend_elements.append(mpatches.Patch(color='gray', alpha=0.3, 
+                                                 label=f'... and {len(segments)-6} more'))
+        ax4.legend(handles=legend_elements, fontsize=8, loc='upper left', 
+                  framealpha=0.9, ncol=2)
+    
+    plt.tight_layout()
+    plt.show()
+
+
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
     'categorize_prompt_types',
     'plot_prompt_quality_trend',
+    'plot_conversation_flow',
     'identify_conversation_segments',
     'identify_turning_points',
     'extract_conversation_topics',
