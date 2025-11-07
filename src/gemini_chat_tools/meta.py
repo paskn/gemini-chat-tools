@@ -1741,9 +1741,11 @@ def plot_conversation_flow(
     prompt_df: pd.DataFrame,
     segments: List[Dict[str, Any]] = None,
     topics_df: pd.DataFrame = None,
+    files_metadata: Dict[int, List[Dict[str, Any]]] = None,
     figsize: tuple = (16, 12),
     show_file_uploads: bool = True,
-    show_segment_boundaries: bool = True
+    show_segment_boundaries: bool = True,
+    show_file_names: bool = True
 ) -> None:
     """Create comprehensive multi-panel visualization of conversation flow.
     
@@ -1752,7 +1754,7 @@ def plot_conversation_flow(
     - Prompt quality metrics over time
     - Topic distribution (if provided)
     - Cumulative token usage with segment boundaries
-    - File upload markers
+    - File upload markers with names (if metadata provided)
     - Turning points
     
     Args:
@@ -1760,9 +1762,12 @@ def plot_conversation_flow(
         prompt_df: DataFrame from analyze_prompt_patterns()
         segments: Optional list from identify_conversation_segments()
         topics_df: Optional DataFrame from extract_conversation_topics()
+        files_metadata: Optional dict from gdrive.get_conversation_files_metadata()
+            Maps chunk_index -> list of file metadata dicts
         figsize: Figure size as (width, height) tuple
         show_file_uploads: If True, mark file upload points
         show_segment_boundaries: If True, draw vertical lines at segment boundaries
+        show_file_names: If True and files_metadata provided, annotate with file names
         
     Example:
         >>> from gemini_chat_tools import analyze_gemini_chat
@@ -1840,6 +1845,43 @@ def plot_conversation_flow(
             upload_y = file_uploads['tokens'].values
             ax1.scatter(upload_x, upload_y, marker='^', s=150, color='green', 
                        edgecolors='darkgreen', linewidths=2, label='File upload', zorder=5)
+            
+            # Add file name annotations if metadata provided
+            if show_file_names and files_metadata:
+                for _, row in file_uploads.iterrows():
+                    chunk_idx = row['chunk_index']
+                    if chunk_idx in files_metadata:
+                        files = files_metadata[chunk_idx]
+                        if files:
+                            # Format file names (show first 2, then "... +N more")
+                            if len(files) == 1:
+                                label = files[0]['name']
+                            elif len(files) == 2:
+                                label = f"{files[0]['name']}\n{files[1]['name']}"
+                            else:
+                                label = f"{files[0]['name']}\n{files[1]['name']}\n... +{len(files)-2} more"
+                            
+                            # Truncate long names
+                            lines = label.split('\n')
+                            truncated_lines = []
+                            for line in lines:
+                                if len(line) > 30:
+                                    truncated_lines.append(line[:27] + '...')
+                                else:
+                                    truncated_lines.append(line)
+                            label = '\n'.join(truncated_lines)
+                            
+                            # Add annotation
+                            ax1.annotate(
+                                label,
+                                xy=(row['sequence_position'], row['tokens']),
+                                xytext=(0, 10),
+                                textcoords='offset points',
+                                fontsize=7,
+                                ha='center',
+                                bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgreen', alpha=0.7),
+                                arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0', color='darkgreen')
+                            )
     
     ax1.set_ylabel('Tokens per Message', fontsize=10)
     ax1.set_title('Message Flow (User vs Model)', fontsize=12, fontweight='bold')
