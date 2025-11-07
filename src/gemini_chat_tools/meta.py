@@ -1500,6 +1500,240 @@ def _compare_segments(seg1: Dict, seg2: Dict) -> List[str]:
     return differences
 
 
+def extract_conversation_topics(chunks: List[Dict[str, Any]]) -> pd.DataFrame:
+    """Extract topics discussed in the conversation.
+    
+    This function identifies what topics and sections were discussed throughout
+    the conversation by detecting mentions of:
+    - Paper sections (introduction, methods, results, discussion, conclusion)
+    - Reviewer references (R1, R2, R3, "first reviewer", etc.)
+    - Issue types (tense, clarity, jargon, speculation, methodology)
+    
+    Args:
+        chunks: List of chunk dictionaries from Gemini chat JSON
+        
+    Returns:
+        pandas DataFrame with columns:
+            - chunk_index (int): Position in conversation
+            - role (str): 'user' or 'model'
+            - text (str): The message text
+            - detected_topics (List[str]): All detected topics
+            - paper_sections (List[str]): Detected paper sections
+            - reviewer_references (List[str]): Detected reviewer mentions
+            - issue_types (List[str]): Detected issue categories
+            - topic_count (int): Total number of topics detected
+            
+    Example:
+        >>> from gemini_chat_tools import analyze_gemini_chat
+        >>> from gemini_chat_tools.meta import extract_conversation_topics
+        >>> 
+        >>> analysis = analyze_gemini_chat("chat.json")
+        >>> topics_df = extract_conversation_topics(analysis._chunks)
+        >>> 
+        >>> # Find chunks discussing methodology
+        >>> methodology_chunks = topics_df[topics_df['paper_sections'].apply(lambda x: 'methods' in x)]
+        >>> print(f"Methodology discussed in {len(methodology_chunks)} messages")
+    """
+    
+    # Define regex patterns for different topic categories
+    
+    # Paper sections (comprehensive patterns)
+    PAPER_SECTION_PATTERNS = {
+        'introduction': [
+            r'\bintroduction\b',
+            r'\bintro\b(?!\w)',  # "intro" but not "introduce"
+            r'\bopening\s+section\b',
+            r'\bfirst\s+section\b',
+        ],
+        'methods': [
+            r'\bmethods?\b',
+            r'\bmethodology\b',
+            r'\bprocedures?\b',
+            r'\bapproach\b',
+            r'\bdata\s+collection\b',
+            r'\banalysis\s+strategy\b',
+        ],
+        'results': [
+            r'\bresults?\b',
+            r'\bfindings?\b',
+            r'\boutcomes?\b',
+            r'\bresult\s+section\b',
+        ],
+        'discussion': [
+            r'\bdiscussion\b',
+            r'\binterpretation\b',
+            r'\bimplications?\b',
+        ],
+        'conclusion': [
+            r'\bconclusion\b',
+            r'\bclosing\s+section\b',
+            r'\bfinal\s+section\b',
+            r'\bsummary\b',
+        ],
+        'abstract': [
+            r'\babstract\b',
+        ],
+        'literature_review': [
+            r'\bliterature\s+review\b',
+            r'\brelated\s+work\b',
+            r'\btheoretical\s+framework\b',
+        ],
+        'references': [
+            r'\breferences?\b',
+            r'\bbibliography\b',
+            r'\bcitations?\b',
+        ],
+    }
+    
+    # Reviewer references
+    REVIEWER_PATTERNS = {
+        'R1': [r'\bR\s*1\b', r'\breviewer\s+1\b', r'\bfirst\s+reviewer\b'],
+        'R2': [r'\bR\s*2\b', r'\breviewer\s+2\b', r'\bsecond\s+reviewer\b'],
+        'R3': [r'\bR\s*3\b', r'\breviewer\s+3\b', r'\bthird\s+reviewer\b'],
+        'R4': [r'\bR\s*4\b', r'\breviewer\s+4\b', r'\bfourth\s+reviewer\b'],
+        'general_reviewer': [
+            r'\breviewer\b(?!\s+[1-4])',  # "reviewer" not followed by number
+            r'\breview\b',
+            r'\bcritique\b',
+            r'\bfeedback\b',
+        ],
+    }
+    
+    # Issue types (what problems are being addressed)
+    ISSUE_PATTERNS = {
+        'tense': [
+            r'\btense\b',
+            r'\bpast\s+tense\b',
+            r'\bpresent\s+tense\b',
+            r'\bverb\s+tense\b',
+        ],
+        'clarity': [
+            r'\bclarity\b',
+            r'\bclarify\b',
+            r'\bunclear\b',
+            r'\bconfusing\b',
+            r'\bvague\b',
+            r'\bambiguous\b',
+            r'\bhard\s+to\s+(?:understand|follow)\b',
+        ],
+        'grammar': [
+            r'\bgrammar\b',
+            r'\bgrammatical\b',
+            r'\bspelling\b',
+            r'\bpunctuation\b',
+            r'\btypo\b',
+        ],
+        'jargon': [
+            r'\bjargon\b',
+            r'\btechnical\s+terms?\b',
+            r'\baccessible\b',
+            r'\bsimplify\b',
+            r'\bplain\s+language\b',
+        ],
+        'speculation': [
+            r'\bspeculation\b',
+            r'\bspeculative\b',
+            r'\bcausal\s+claim\b',
+            r'\boverclaim\b',
+            r'\btoo\s+strong\b',
+        ],
+        'methodology': [
+            r'\bmethodological\b',
+            r'\bmethod\s+issue\b',
+            r'\bdata\s+analysis\b',
+            r'\bstatistical\b',
+            r'\bmeasurement\b',
+        ],
+        'argument': [
+            r'\bargument\b',
+            r'\blogic\b',
+            r'\breasoning\b',
+            r'\bjustification\b',
+            r'\brationale\b',
+        ],
+        'evidence': [
+            r'\bevidence\b',
+            r'\bsupport\b',
+            r'\bcitation\b',
+            r'\bsource\b',
+            r'\breference\b',
+        ],
+        'structure': [
+            r'\bstructure\b',
+            r'\borganization\b',
+            r'\bflow\b',
+            r'\btransition\b',
+            r'\bcoherence\b',
+        ],
+        'length': [
+            r'\btoo\s+long\b',
+            r'\btoo\s+short\b',
+            r'\bword\s+count\b',
+            r'\blength\b',
+            r'\bconcise\b',
+            r'\bverbose\b',
+        ],
+    }
+    
+    topic_data = []
+    
+    for i, chunk in enumerate(chunks):
+        role = chunk.get('role', '')
+        text = chunk.get('text', '')
+        
+        # Skip empty text
+        if not text.strip():
+            continue
+        
+        # Skip thinking chunks and error chunks
+        if chunk.get('isThought', False) or chunk.get('errorMessage'):
+            continue
+        
+        text_lower = text.lower()
+        
+        # Detect paper sections
+        paper_sections = []
+        for section, patterns in PAPER_SECTION_PATTERNS.items():
+            for pattern in patterns:
+                if re.search(pattern, text_lower):
+                    paper_sections.append(section)
+                    break  # Only add once per section
+        
+        # Detect reviewer references
+        reviewer_refs = []
+        for reviewer, patterns in REVIEWER_PATTERNS.items():
+            for pattern in patterns:
+                if re.search(pattern, text_lower):
+                    reviewer_refs.append(reviewer)
+                    break  # Only add once per reviewer
+        
+        # Detect issue types
+        issue_types = []
+        for issue, patterns in ISSUE_PATTERNS.items():
+            for pattern in patterns:
+                if re.search(pattern, text_lower):
+                    issue_types.append(issue)
+                    break  # Only add once per issue
+        
+        # Combine all detected topics
+        detected_topics = paper_sections + reviewer_refs + issue_types
+        
+        # Only include chunks with at least one topic
+        if detected_topics:
+            topic_data.append({
+                'chunk_index': i,
+                'role': role,
+                'text': text,
+                'detected_topics': detected_topics,
+                'paper_sections': paper_sections,
+                'reviewer_references': reviewer_refs,
+                'issue_types': issue_types,
+                'topic_count': len(detected_topics)
+            })
+    
+    return pd.DataFrame(topic_data)
+
+
 __all__ = [
     'analyze_prompt_patterns',
     'detect_prompt_fatigue',
@@ -1507,4 +1741,5 @@ __all__ = [
     'plot_prompt_quality_trend',
     'identify_conversation_segments',
     'identify_turning_points',
+    'extract_conversation_topics',
 ]
