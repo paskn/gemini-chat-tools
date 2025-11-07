@@ -922,6 +922,8 @@ def plot_prompt_quality_trend(prompt_df: pd.DataFrame,
     plt.tight_layout()
     plt.show()
 
+    return fig
+
 
 def identify_conversation_segments(
     timeline: pd.DataFrame,
