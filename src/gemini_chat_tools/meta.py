@@ -922,6 +922,8 @@ def plot_prompt_quality_trend(prompt_df: pd.DataFrame,
     plt.tight_layout()
     plt.show()
 
+    return fig
+
 
 def identify_conversation_segments(
     timeline: pd.DataFrame,
@@ -1746,7 +1748,7 @@ def plot_conversation_flow(
     show_file_uploads: bool = True,
     show_segment_boundaries: bool = True,
     show_file_names: bool = True
-) -> None:
+):
     """Create comprehensive multi-panel visualization of conversation flow.
     
     This function generates a detailed timeline visualization showing:
@@ -1768,6 +1770,9 @@ def plot_conversation_flow(
         show_file_uploads: If True, mark file upload points
         show_segment_boundaries: If True, draw vertical lines at segment boundaries
         show_file_names: If True and files_metadata provided, annotate with file names
+    
+    Returns:
+        matplotlib.figure.Figure: The generated figure object (can be saved with fig.savefig())
         
     Example:
         >>> from gemini_chat_tools import analyze_gemini_chat
@@ -1784,7 +1789,13 @@ def plot_conversation_flow(
         >>> segments = identify_conversation_segments(timeline, prompt_df, method='topic_shift')
         >>> topics_df = extract_conversation_topics(analysis._chunks)
         >>> 
-        >>> plot_conversation_flow(timeline, prompt_df, segments, topics_df)
+        >>> # Display the plot
+        >>> fig = plot_conversation_flow(timeline, prompt_df, segments, topics_df)
+        >>> 
+        >>> # Save to file
+        >>> fig.savefig('conversation_flow.png', dpi=300, bbox_inches='tight')
+        >>> # Or save as PDF for papers/presentations
+        >>> fig.savefig('conversation_flow.pdf', bbox_inches='tight')
     """
     
     try:
@@ -2031,6 +2042,8 @@ def plot_conversation_flow(
     
     plt.tight_layout()
     plt.show()
+    
+    return fig
 
 
 __all__ = [
